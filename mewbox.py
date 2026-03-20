@@ -786,7 +786,7 @@ def build_itemparam_row(cfg):
 <Type>15</Type>
 <SubType>0</SubType>
 <ItemFType>0</ItemFType>
-<n><![CDATA[{cfg['name']}]]></n>
+<Name><![CDATA[{cfg['name']}]]></Name>
 <Comment><![CDATA[{cfg['comment']}]]></Comment>
 <Use><![CDATA[{cfg['use']}]]></Use>
 <Name_Eng><![CDATA[ ]]></Name_Eng>
@@ -4870,7 +4870,7 @@ def build_generic_itemparam_row(cfg):
         f"<Type>{cfg.get('type_val','15')}</Type>",
         f"<SubType>{cfg.get('subtype_val','0')}</SubType>",
         f"<ItemFType>{cfg.get('itemftype_val','0')}</ItemFType>",
-        f"<n>{_cd(cfg.get('name',''))}</n>",
+        f"<Name>{_cd(cfg.get('name',''))}</Name>",
         f"<Comment>{_cd(cfg.get('comment',''))}</Comment>",
         f"<Use>{_cd(cfg.get('use',''))}</Use>",
         f"<Name_Eng>{_cd(cfg.get('name_eng',' '))}</Name_Eng>",
@@ -6992,14 +6992,14 @@ _SET_COL_GUIDE = (
     "CMSetItemParam CSV / Excel column guide:\n\n"
     "Layout A — one row per set  (SetID column present):\n"
     "  SetID / Set ID     → the set's own <ID> tag\n"
-    "  Name / Set Name    → the set's <n> name (CDATA)\n"
+    "  Name / Set Name    → the set's <Name> name (CDATA)\n"
     "  ID  (repeated)     → item IDs for Item0..Item7\n"
     "  Item0..Item7  or  0..7   → item IDs by slot\n"
     "  Item Name / Name of Item / Box Name / Name of Box\n"
     "                     → inline <!-- comment --> next to each item\n\n"
     "Layout B — multiple rows per set  (group-header style):\n"
     "  Any column whose header is not a recognised keyword\n"
-    "    becomes the set's group name (its <n>)\n"
+    "    becomes the set's group name (its <Name>)\n"
     "  ID column          → item IDs (one per row)\n"
     "  Item Name / Name of Item → inline <!-- comment -->\n"
     "  SetID column       → the set's <ID> (optional)\n\n"
@@ -7101,7 +7101,7 @@ class SetItemGenerator(tk.Frame):
         _lr(s1, "SetID: ⚠ REQUIRED", v_set_id, 14,
             "The Set's own unique ID.  This is the <ID> tag in CMSetItemParam.xml.")
         _lr(s1, "Set Name:", v_set_name, 40,
-            "The display name for this set.  Stored as <n><![CDATA[...]]></n>.")
+            "The display name for this set.  Stored as <Name><![CDATA[...]]></Name>.")
 
         # Items section
         s2 = mk_section(C, "  Items (Item0 – Item7)  —  ID = item inside the set")
@@ -10197,7 +10197,7 @@ class MassVarManip(tk.Frame):
                 "  • Always use Preview before Apply & Save.\n"
                 "  • Keep a backup of your XML file.\n"
                 "  • Do not include < > or & in replacement values for non-CDATA fields.\n"
-                "  • For CDATA fields (n, Comment, FileName, etc.) special chars are fine.\n"
+                "  • For CDATA fields (Name, Comment, FileName, etc.) special chars are fine.\n"
             )
             txt.insert("1.0", ref)
             txt.config(state="disabled")
@@ -10210,7 +10210,7 @@ class MassVarManip(tk.Frame):
         if _APP_SETTINGS.get("advanced_renaming_enabled", False):
             adv_f = mk_section(C, "  Advanced Name Replacement  (⚠ Advanced Renaming enabled in Settings)")
             tk.Label(adv_f,
-                     text="  Apply a rename pattern to the <n> (Name) field using prefix/suffix or regex.\n"
+                     text="  Apply a rename pattern to the <Name> field using prefix/suffix or regex.\n"
                           "  This is additive to the main operation above — use conditions to target specific rows.",
                      bg=BG, fg=FG_GREY, font=("Consolas", 8), justify="left").pack(anchor="w", padx=10, pady=4)
             adv_row = tk.Frame(adv_f, bg=BG); adv_row.pack(fill="x", padx=10, pady=4)
