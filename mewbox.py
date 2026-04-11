@@ -911,8 +911,10 @@ def real_drop_slots(block):
     return [(int(i),v) for i,v in sorted(pairs,key=lambda x:int(x[0])) if v!="0"]
 
 def apply_cfg_to_row(block, cfg):
-    block = _set_tag(block,"Type",str(cfg["type"]))
-    block = _set_tag(block,"DropCnt",str(cfg["drop_cnt"]))
+    if "type" in cfg:
+        block = _set_tag(block,"Type",str(cfg["type"]))
+    if "drop_cnt" in cfg:
+        block = _set_tag(block,"DropCnt",str(cfg["drop_cnt"]))
     for pos,(idx,_) in enumerate(real_drop_slots(block)):
         sc = cfg["slots"][pos] if pos<len(cfg["slots"]) else {"rate":100,"count":1}
         block = _set_tag(block,f"DropRate_{idx}",str(sc["rate"]))
@@ -1319,6 +1321,7 @@ class AppSession:
         self.present_xml_path = None
         self.compound_rows     = []   # CompoundExchangeShop compound row tuples
         self.exchange_rows     = []   # CompoundExchangeShop exchange row tuples
+        self.myshop_raw_prefs  = {}
 
 # ══════════════════════════════════════════════════════════════════════════════
 # GLOBAL APP SETTINGS  (gear menu, libconfig dir, filename overrides, timestamp)
@@ -2000,6 +2003,8 @@ class BoxXMLGenerator(tk.Frame):
                  bg=BG, fg=ACC1).pack(pady=(30,5))
         tk.Label(frm, text="Load a spreadsheet (CSV or Excel) to batch-generate box XML rows.",
                  bg=BG, fg=FG_DIM, font=("Consolas",10)).pack(pady=5)
+        tk.Label(frm, text="NOTE: libcmgds_e generation is currently for Polar files only and will not work with Season 2 files.",
+                 bg=BG, fg=ACC3, font=("Consolas",9,"bold")).pack(pady=2)
         info_frm = tk.Frame(frm, bg=BG2); info_frm.pack(pady=6, padx=20, fill="x")
         tk.Label(info_frm,
             text=(
@@ -2551,8 +2556,8 @@ class BoxXMLGenerator(tk.Frame):
                        variable=myshop_var, bg=BG, fg=FG, selectcolor=BG3,
                        activebackground=BG, font=("Consolas",9),
                        command=_toggle_ms_body).pack(side="left")
-        tk.Label(ms_hdr, text="  (exports to MyShop folder)", bg=BG, fg=FG_GREY,
-                 font=("Consolas",8)).pack(side="left")
+        tk.Label(ms_hdr, text="  (exports to MyShop folder)   * Polar Files Only *", bg=BG, fg=ACC3,
+                 font=("Consolas",8,"bold")).pack(side="left")
 
         ms_body = tk.Frame(myshop_sec, bg=BG)
         # Only show body when checkbox is enabled
@@ -3427,9 +3432,9 @@ class BoxRateAdjuster(tk.Frame):
                     except: rw_dc = len(slots)
                 else:
                     rw_dc = len(slots)
+                cfg={"type":rw_type,"drop_cnt":rw_dc,"slots":slot_cfgs}
             else:
-                rw_type = 2; rw_dc = len(slots)
-            cfg={"type":rw_type,"drop_cnt":rw_dc,"slots":slot_cfgs}
+                cfg={"slots":slot_cfgs}
             new_row=apply_cfg_to_row(row,cfg)
             drop_ids=[v for _,v in real_drop_slots(new_row)]
             name=next((n for r,n,_,_,_ in matched if r==rid),"")
@@ -3655,7 +3660,11 @@ class BoxRateAdjuster(tk.Frame):
         def replace_row(m):
             row=m.group(0); rid=_get_tag(row,"Id")
             if rid not in self.manual_configs: return row
-            new_row=apply_cfg_to_row(row,self.manual_configs[rid])
+            cfg = self.manual_configs[rid]
+            if not self._rewrite_params.get():
+                cfg.pop("type", None)
+                cfg.pop("drop_cnt", None)
+            new_row=apply_cfg_to_row(row,cfg)
             drop_ids=[v for _,v in real_drop_slots(new_row)]
             name=_name_map.get(rid,"")
             csv_rows.append([rid,name,*drop_ids]); return new_row
@@ -6249,7 +6258,7 @@ def _build_box_myshop_outputs(box_configs):
             f'goods_category="1" goods_category0="11" goods_category1="{goods_cat1_xml}" '
             f'goods_category2="0" goods_limit_desc="All Characters" '
             f'goods_char_level="{level}" goods_char_sex="0" goods_char_type="15" '
-            f'goods_issell="0" goods_created="{created.replace("-","")}" '
+            f'goods_issell="1" goods_created="{created.replace("-","")}" '
             f'goods_filtercode1="0" goods_filtercode2="0" goods_filtercode3="0" '
             f'goods_filtercode4="0" goods_filterlevel="0" '
             f'discount_start_date="1900-01-01 00:00:00" '
@@ -6279,7 +6288,7 @@ def _build_box_myshop_outputs(box_configs):
             f"{new_stamp}, {pop_stamp}, 0, "
             f"11, 3, {sql_cat2}, "
             f"N'All Characters', {level}, 0, 15, "
-            f"{version}, 0, ''"
+            f"{version}, 1, ''"
             f");"
         )
 
@@ -6294,7 +6303,7 @@ def _build_box_myshop_outputs(box_configs):
             f") VALUES ("
             f"{box_id}, {box_id}, {item_count}, {box_id}, 1, "
             f"NULL, NULL, NULL, NULL, "
-            f"{glc}, {glc}, 0"
+            f"{glc}, {glc}, NULL"
             f");"
         )
 
@@ -6306,7 +6315,7 @@ def _build_box_myshop_outputs(box_configs):
             f"INSERT INTO gmg_account.dbo.tbl_goods_limit ("
             f"goods_code, limit_code, goods_limit_price, default_display"
             f") VALUES ("
-            f"{box_id}, {limit_use}, {price}, True"
+            f"{box_id}, {limit_use}, {price}, 1"
             f");"
         )
 
@@ -9289,20 +9298,50 @@ def _count_rows_in_file(path):
 
 
 def _update_rowcount_in_file(path):
-    """Update RowCount='N' (ItemParam-style) or CHARACTER count="N" (libcmgds_e-style).
-    Returns (old, new) or None if neither found."""
+    """Update RowCount='N' (ItemParam-style) or CHARACTER/MYCAMP count="N" (libcmgds_e-style).
+    Returns (old, new) or None if neither found.
+    For libcmgds_e: counts parent <GOODS tags ONLY within each section body separately."""
     text = open(path, encoding="utf-8", errors="replace").read()
 
-    # ── libcmgds_e: <CHARACTER count="N"> — count <GOODS  occurrences ────
-    char_pat = re.compile(r'(<CHARACTER\s+count=")(\d+)(")')
-    mc = char_pat.search(text)
-    if mc:
-        goods_count = text.count("<GOODS ")
-        old = int(mc.group(2))
-        new_text = char_pat.sub(lambda x: x.group(1) + str(goods_count) + x.group(3), text, count=1)
-        with open(path, "w", encoding="utf-8") as f:
+    # ── libcmgds_e: <CHARACTER count="N"> and/or <MYCAMP count="N"> ──────────
+    # Match each section and count <GOODS  (with space/newline after) WITHIN only that section's body.
+    # This avoids cross-contamination between CHARACTER and MYCAMP counts.
+    char_pat  = re.compile(r'(<CHARACTER\s+count=")(\d+)(")(.*?)(</CHARACTER>)', re.DOTALL)
+    mycamp_pat = re.compile(r'(<MYCAMP\s+count=")(\d+)(")(.*?)(</MYCAMP>)', re.DOTALL)
+
+    char_mc   = char_pat.search(text)
+    mycamp_mc = mycamp_pat.search(text)
+
+    if char_mc or mycamp_mc:
+        new_text = text
+        results  = []  # list of (old, new) per section
+
+        if char_mc:
+            body = char_mc.group(4)
+            goods_count = len(re.findall(r'<GOODS[\s\n\r]', body))
+            old = int(char_mc.group(2))
+            # Replace only the count attribute of the CHARACTER tag
+            new_text = new_text[:char_mc.start(2)] + str(goods_count) + new_text[char_mc.end(2):]
+            results.append((old, goods_count))
+
+        if mycamp_mc:
+            # Re-search in updated new_text since offsets may have shifted
+            mc2 = mycamp_pat.search(new_text)
+            if mc2:
+                body2 = mc2.group(4)
+                goods_count2 = len(re.findall(r'<GOODS[\s\n\r]', body2))
+                old2 = int(mc2.group(2))
+                new_text = new_text[:mc2.start(2)] + str(goods_count2) + new_text[mc2.end(2):]
+                results.append((old2, goods_count2))
+
+        with open(path, "w", encoding="utf-8", newline="") as f:
             f.write(new_text)
-        return old, goods_count
+
+        # Return combined summary as (char_old|mycamp_old, char_new|mycamp_new) tuple pairs
+        if len(results) == 1:
+            return results[0]
+        # Multiple sections: return composite so caller can log both
+        return results  # list of (old, new) tuples
 
     # ── ItemParam-style: RowCount='N' ─────────────────────────────────────
     count = text.count("<ROW>")
@@ -9315,6 +9354,7 @@ def _update_rowcount_in_file(path):
     with open(path, "w", encoding="utf-8") as f:
         f.write(new_text)
     return old, count
+
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -9367,13 +9407,20 @@ class RowCounterUpdater(tk.Frame):
         self._txt.config(state="normal"); self._txt.delete("1.0","end"); self._txt.config(state="disabled")
         n = _count_rows_in_file(path)
         self._log(f"File: {os.path.basename(path)}")
-        self._log(f"  <ROW> count: {n:,}")
         result = _update_rowcount_in_file(path)
-        if result:
-            old, new = result
-            self._log(f"  RowCount updated: {old} → {new}")
+        if not result:
+            self._log(f"  <ROW> count: {n:,}")
+            self._log("  (No RowCount/count attribute found — nothing to update)")
+        elif isinstance(result, list):
+            # libcmgds_e with multiple sections (CHARACTER + MYCAMP)
+            labels = ["CHARACTER", "MYCAMP"]
+            for i, (old, new) in enumerate(result):
+                lbl = labels[i] if i < len(labels) else f"Section {i+1}"
+                self._log(f"  [{lbl}] count updated: {old} → {new}")
         else:
-            self._log("  (No RowCount attribute found — nothing to update)")
+            old, new = result
+            self._log(f"  <ROW> count: {n:,}")
+            self._log(f"  RowCount updated: {old} → {new}")
 
     def _count_folder(self):
         folder = filedialog.askdirectory(title="Select folder", parent=self.root)
@@ -9388,11 +9435,19 @@ class RowCounterUpdater(tk.Frame):
             n = _count_rows_in_file(p)
             total += n
             result = _update_rowcount_in_file(p)
-            suffix = ""
-            if result:
+            if not result:
+                self._log(f"  {fname}: {n:,} rows  (no count attribute)")
+            elif isinstance(result, list):
+                # libcmgds_e multi-section
+                labels = ["CHARACTER", "MYCAMP"]
+                parts = ", ".join(
+                    f"{labels[i] if i < len(labels) else 'Sec'+str(i+1)}: {old}→{new}"
+                    for i, (old, new) in enumerate(result)
+                )
+                self._log(f"  {fname}  [{parts}]")
+            else:
                 old, new = result
-                suffix = f"  [RowCount: {old} → {new}]"
-            self._log(f"  {fname}: {n:,} rows{suffix}")
+                self._log(f"  {fname}: {n:,} rows  [RowCount: {old} → {new}]")
         self._log(f"\nTotal: {total:,} rows across {len(xmls)} files")
 
 
@@ -11117,6 +11172,634 @@ class XMLBulkUpdater(tk.Frame):
 # Converts a full XML table → CSV, or CSV → XML table. Warns on raw-ROW files.
 # ══════════════════════════════════════════════════════════════════════════════
 
+
+
+#  ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ?
+# TOOL 19 - MyShop Lib & DB Generator
+#  ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ?
+
+
+class MyShopTool(tk.Frame):
+    ACC = "#ff9e99"
+
+    MAIN_CATS = ["1 - MyShop", "1 - MyCamp (Set/Space)", "2 - MyCamp (Furniture/Special)"]
+
+    MS_CAT0 = ["11 - Special", "12 - Equipment", "13 - Enhance", "14 - Use", "15 - Fashion", "16 - Utility"]
+    MC_CAT0 = ["0 - None", "1 - Space", "2 - BG", "3 - Furniture", "4 - Furniture/Props", "5 - Special", "6 - None"]
+
+    MS_CAT1 = {
+        "11": ["101 - New Item", "102 - Recommended", "103 - Equipment Set", "104 - Special Set", "113 - Special Box"],
+        "12": ["105 - Head", "106 - Mask", "107 - Accessory", "108 - Cape", "109 - Weapon", "110 - Hat", "111 - Shield"],
+        "13": ["114 - Pet", "115 - Drill", "116 - Pet Reinforce", "117 - Guardian", "118 - RuneStone"],
+        "14": ["120 - Modifiers", "121 - Reset Items", "123 - Scroll", "124 - Special", "125 - Hair Dye", "126 - Potions", "127 - Compound Items"],
+        "15": ["128 - Bunny/Paula", "129 - Buffalo", "130 - Sheep", "131 - Dragon", "132 - Fox", "133 - Lion", "134 - Cat", "135 - Raccoon"],
+        "16": ["136 - Utility (if applicable)"]
+    }
+    MC_CAT1 = {
+        "0": ["0 - Sort? (Set)"],
+        "1": ["1 - Floor/Wall", "2 - Partition"], # Space
+        "2": ["0 - Camp", "1 - Camp", "3 - Skin", "4 - WP", "5 - Floor", "6 - Window", "7 - Door"], # BG
+        "3": ["1 - Bed", "2 - Rack", "3 - Table/Chair", "4 - Chair", "5 - Furnishing", "6 - Kit/Bath"], # Fur
+        "4": ["1 - S-Electrns", "2 - Wall Deco", "3 - Floor Deco", "4 - Carpet"], # Props
+        "5": ["1 - Functional Furniture"], # Special
+        "6": ["0 - None"]
+    }
+    MC_CAT2 = ["0 - None", "2 - Stripe WP"]
+
+    def __init__(self, parent, root, session):
+        super().__init__(parent, bg=BG)
+        self.root = root
+        self.session = session
+        self._mode = "raw"
+        self._listings = []
+        self._current_idx = 0
+        self._cat0_cb = None
+        self._cat1_cb = None
+        self._cat2_cb = None
+        self._build_screen()
+
+    def _clear(self):
+        for w in self.winfo_children(): w.destroy()
+
+    def _build_screen(self):
+        self._clear()
+        hdr = tk.Frame(self, bg=BG); hdr.pack(fill="x", pady=(10,5))
+        tk.Label(hdr, text="MYSHOP LIB & DB GENERATOR",
+                 font=("Consolas", 15, "bold"), bg=BG, fg=self.ACC).pack()
+        tk.Label(hdr, text="NOTE: Currently for Polar files only; will not work with Season 2 files as of right now.",
+                 bg=BG, fg=ACC3, font=("Consolas", 9, "bold")).pack(pady=2)
+
+        nav = tk.Frame(self, bg=BG); nav.pack(fill="x", padx=10, pady=5)
+        for label, val in [("Set/Listing Maker", "raw"), ("XML to SQL Mode", "xml")]:
+            tk.Radiobutton(nav, text=label, variable=tk.StringVar(value=self._mode), value=val,
+                           command=lambda m=val: setattr(self, "_mode", m) or self._build_screen(),
+                           bg=BG, fg=FG, selectcolor=BG3, font=("Consolas", 10)).pack(side="left", padx=10)
+
+        if self._mode == "raw":
+            self._build_raw_mode()
+        else:
+            self._build_xml_mode()
+
+    def _build_xml_mode(self):
+        body = tk.Frame(self, bg=BG); body.pack(fill="both", expand=True, padx=20, pady=10)
+        sf = mk_section(body, "  Paste libcmgds_e XML (GOODS blocks)  ")
+        txt = tk.Text(sf, height=20, bg=BG2, fg=FG, font=("Consolas", 9))
+        txt.pack(fill="both", expand=True, padx=8, pady=8)
+
+        def _generate():
+            xml_text = txt.get("1.0", "end")
+            blocks = re.findall(r'<GOODS\s+(.*?)(?:/\s*>|>(.*?)</GOODS>)', xml_text, re.DOTALL | re.IGNORECASE)
+            if not blocks: return messagebox.showerror("Error", "No <GOODS> tags found.")
+            sql_goods, sql_list, sql_limit = [], [], []
+            today = datetime.date.today().strftime("%Y-%m-%d")
+
+            for attrs_str, inner in blocks:
+                attr_dict = {m.group(1).lower(): m.group(2) for m in re.finditer(r'([a-zA-Z0-9_]+)\s*=\s*"([^"]*)"', attrs_str)}
+                box_id = attr_dict.get("goods_code", "0")
+                box_name = attr_dict.get("goods_name", "Unknown")
+                box_desc = attr_dict.get("goods_desc", "")
+                cat0 = attr_dict.get("goods_category0", "11")
+                cat1 = attr_dict.get("goods_category1", "101")
+                cat2 = attr_dict.get("goods_category2", "0")
+                limit_use = attr_dict.get("goods_limit_use", "0")
+                limit_time = attr_dict.get("goods_limit_time", "0")
+                price = attr_dict.get("goods_cash_price", "0")
+                nw = attr_dict.get("goods_shop_new", "0")
+                pop = attr_dict.get("goods_shop_popular", "0")
+                lvl = attr_dict.get("goods_char_level", "0")
+                issell = attr_dict.get("goods_issell", "1")
+                created = attr_dict.get("goods_created", today.replace("-","")[:8])
+
+                sub_items = []
+                for mm in re.finditer(r'<GOODS_LIST\s+(.*?)/\s*>', inner or attrs_str, re.IGNORECASE):
+                    sub_items.append({m.group(1).lower(): m.group(2) for m in re.finditer(r'([a-zA-Z0-9_]+)\s*=\s*"([^"]*)"', mm.group(1))})
+                
+                if not sub_items:
+                    sub_items.append({
+                        "item_index": box_id,
+                        "goods_name": box_name,
+                        "item_count": "1",
+                        "item_class": "1",
+                        "goods_list_code": attr_dict.get("goods_list_code", box_id),
+                        "parents_list_code": attr_dict.get("parents_list_code", box_id)
+                    })
+
+                version_code = sub_items[0].get("goods_list_code", "0")
+                sql_cat2 = "2" if cat1 == "113" else "0"
+
+                sql_goods.append(
+                    f"INSERT INTO gmg_account.dbo.tbl_goods ("
+                    f"goods_code, goods_name, goods_desc, goods_capacity, goods_category, "
+                    f"goods_set_count, goods_item_index, goods_item_count, "
+                    f"goods_limit_use, goods_limit_time, goods_cash_price, goods_created, "
+                    f"goods_shop_new, goods_shop_popular, goods_sellcount, "
+                    f"goods_category0, goods_category1, goods_category2, "
+                    f"goods_limit_desc, goods_char_level, goods_char_sex, goods_char_type, "
+                    f"version_code, goods_issell, goods_image"
+                    f") VALUES ("
+                    f"{box_id}, N'{box_name.replace(chr(39),chr(39)+chr(39))}', N'{box_desc.replace(chr(39),chr(39)+chr(39))}', NULL, 0, "
+                    f"{len(sub_items)}, NULL, NULL, "
+                    f"{limit_use}, {limit_time}, {price}, '{created} 00:00:00', "
+                    f"{nw}, {pop}, 0, "
+                    f"{attr_dict.get('goods_category','1')}, {cat1}, {sql_cat2}, "
+                    f"N'All Characters', {lvl}, 0, 15, "
+                    f"{version_code}, {issell}, ''"
+                    f");"
+                )
+
+                sql_limit.append(
+                    f"INSERT INTO gmg_account.dbo.tbl_goods_limit ("
+                    f"goods_code, limit_code, goods_limit_price, default_display"
+                    f") VALUES ("
+                    f"{box_id}, {limit_use}, {price}, 1"
+                    f");"
+                )
+
+                for item in sub_items:
+                    sql_list.append(
+                        f"INSERT INTO gmg_account.dbo.tbl_goods_list ("
+                        f"goods_code, item_index, item_count, goods_scode, item_class, "
+                        f"preview_x, preview_y, preview_z, preview_d, "
+                        f"goods_list_code, parents_list_code, goods_list_limit"
+                        f") VALUES ("
+                        f"{item.get('item_index','0')}, {item.get('item_index','0')}, {item.get('item_count','1')}, {item.get('item_index','0')}, {item.get('item_class','1')}, "
+                        f"'{item.get('preview_x','')}', '{item.get('preview_y','')}', '{item.get('preview_z','')}', '{item.get('preview_d','')}', "
+                        f"{item.get('goods_list_code','0')}, {item.get('parents_list_code','0')}, NULL"
+                        f");"
+                    )
+
+            full_sql = "-- tbl_goods\n" + "\n".join(sql_goods) + "\n\n-- tbl_goods_list\n" + "\n".join(sql_list) + "\n\n-- tbl_goods_limit\n" + "\n".join(sql_limit)
+            _show_text_window("Generated SQL", full_sql, self.root)
+
+        mk_btn(sf, "s  Generate SQL statements", _generate, color=GREEN, fg=BG2).pack(pady=10)
+
+    def _build_raw_mode(self):
+        body = tk.Frame(self, bg=BG); body.pack(fill="both", expand=True)
+        scroll_host = tk.Frame(body, bg=BG); scroll_host.pack(fill="both", expand=True, padx=4)
+        c, f = mk_scroll_canvas(scroll_host)
+
+        if not self._listings:
+            s = self.session.myshop_raw_prefs or {}
+            self._listings.append({
+                "goods_code": str(s.get("goods_code", "")),
+                "goods_name": "",
+                "goods_desc": s.get("goods_desc", ""),
+                "goods_cash_price": s.get("goods_cash_price", "0"),
+                "goods_limit_use": s.get("goods_limit_use", "0 - Boxes/Untimed"),
+                "goods_limit_time": s.get("goods_limit_time", "0"),
+                "goods_category": s.get("goods_category", "1 - MyShop"),
+                "goods_category0": s.get("goods_category0", "11 - Special"),
+                "goods_category1": s.get("goods_category1", "101 - New Item"),
+                "goods_category2": s.get("goods_category2", "0 - None"),
+                "goods_limit_desc": s.get("goods_limit_desc", "All Characters"),
+                "goods_char_level": s.get("goods_char_level", "0"),
+                "goods_char_sex": s.get("goods_char_sex", "0"),
+                "goods_char_type": s.get("goods_char_type", "15"),
+                "goods_shop_new": s.get("goods_shop_new", 0),
+                "goods_shop_popular": s.get("goods_shop_popular", 0),
+                "goods_issell": s.get("goods_issell", 1),
+                "goods_filtercode1": s.get("goods_filtercode1", "0"),
+                "goods_filtercode2": s.get("goods_filtercode2", "0"),
+                "goods_filtercode3": s.get("goods_filtercode3", "0"),
+                "goods_filtercode4": s.get("goods_filtercode4", "0"),
+                "goods_filterlevel": s.get("goods_filterlevel", "0"),
+                "discount_price": s.get("discount_price", "0"),
+                "discount_start_date": s.get("discount_start_date", "1900-01-01 00:00:00"),
+                "discount_end_date": s.get("discount_end_date", "1900-01-01 00:00:00"),
+                "discount_display_date": s.get("discount_display_date", ""),
+                "strict_code": s.get("strict_code", 1),
+                "items": [{
+                    "item_index": "",
+                    "goods_name": "",
+                    "item_count": "1",
+                    "item_class": "1",
+                    "goods_list_code": str(s.get("goods_list_code", "")),
+                    "parents_list_code": str(s.get("parents_list_code", "")),
+                    "pv_x": "", "pv_y": "", "pv_z": "", "pv_d": ""
+                }]
+            })
+            self._current_idx = 0
+
+        idx = self._current_idx
+        listing = self._listings[idx]
+
+        nav = tk.Frame(f, bg=BG); nav.pack(fill="x", pady=(5,10))
+        if idx > 0: mk_btn(nav, "-? Prev Listing", lambda: self._go(idx-1)).pack(side="left")
+        tk.Label(nav, text=f" Listing {idx+1} / {len(self._listings)} ", bg=BG, fg=FG, font=("Consolas", 12, "bold")).pack(side="left", padx=15)
+        mk_btn(nav, "Next Listing - ", lambda: self._go(idx+1)).pack(side="left")
+
+        sec1 = mk_section(f, "  GOODS (Parent Listing Settings)  ")
+        
+        def _add_entry(parent, label, key, width, dictionary, tip=""):
+            row = tk.Frame(parent, bg=BG); row.pack(fill="x", padx=4, pady=2)
+            tk.Label(row, text=label, width=16, anchor="w", bg=BG, fg=FG, font=("Consolas", 9)).pack(side="left")
+            v = tk.StringVar(value=str(dictionary.get(key,"")))
+            e = tk.Entry(row, textvariable=v, width=width, bg=BG3, fg=FG, insertbackground=FG, font=("Consolas", 9))
+            e.pack(side="left")
+            v.trace_add("write", lambda *_: dictionary.update({key: v.get()}))
+            if tip: _attach_tooltip(e, tip)
+            return row, v, e
+
+        def _add_drop(parent, label, key, width, options, dictionary):
+            row = tk.Frame(parent, bg=BG); row.pack(fill="x", padx=4, pady=2)
+            tk.Label(row, text=label, width=16, anchor="w", bg=BG, fg=FG, font=("Consolas", 9)).pack(side="left")
+            v = tk.StringVar(value=str(dictionary.get(key,"")))
+            cb = ttk.Combobox(row, textvariable=v, values=options, state="readonly", width=width, font=("Consolas", 9))
+            cb.pack(side="left")
+            def _cb_saved(*_):
+                dictionary.update({key: v.get()})
+                self.session.myshop_raw_prefs.update({key:v.get()})
+                self._cb_refresh(key)
+            v.trace_add("write", _cb_saved)
+            return row, v, cb
+
+        r1 = tk.Frame(sec1, bg=BG); r1.pack(fill="x", pady=2)
+        _, gc_v, _ = _add_entry(r1, "Goods Code (ID):", "goods_code", 14, listing, "The unique listing ID (goods_code). Used in Parent/Shop queries.")
+        strict_v = tk.IntVar(value=listing.get("strict_code", 1))
+        def _on_strict_toggle():
+            listing["strict_code"] = strict_v.get()
+            if strict_v.get() and len(listing["items"]) == 1:
+                listing["items"][0]["item_index"] = gc_v.get()
+                listing["items"][0]["goods_list_code"] = gc_v.get()
+                listing["items"][0]["parents_list_code"] = gc_v.get()
+                self._build_screen()
+        tk.Checkbutton(r1, text="Strict Link Codes (Auto-sync Item index&code to Goods code)", variable=strict_v, command=_on_strict_toggle, bg=BG, fg=ACC4, selectcolor=BG3, font=("Consolas", 8)).pack(side="left", padx=10)
+
+        def _sync_strict(*_):
+            if strict_v.get() and len(listing["items"]) == 1:
+                listing["items"][0]["item_index"] = gc_v.get()
+                listing["items"][0]["goods_list_code"] = gc_v.get()
+                listing["items"][0]["parents_list_code"] = gc_v.get()
+        gc_v.trace_add("write", _sync_strict)
+
+        _add_entry(sec1, "Name:", "goods_name", 40, listing)
+        _add_entry(sec1, "Description:", "goods_desc", 50, listing)
+        
+        r2 = tk.Frame(sec1, bg=BG); r2.pack(fill="x", pady=2)
+        _, pv, _ = _add_entry(r2, "Price (NCash):", "goods_cash_price", 10, listing)
+
+        def _add_chk(parent, label, key, dictionary):
+            v = tk.IntVar(value=dictionary.get(key, 0))
+            chk = tk.Checkbutton(parent, text=label, variable=v, bg=BG, fg=FG, selectcolor=BG3, activebackground=BG, font=("Consolas", 9), command=lambda: dictionary.update({key: v.get()}))
+            chk.pack(side="left", padx=6)
+            return v
+
+        _add_chk(r2, "Listed (issell)", "goods_issell", listing)
+        _add_chk(r2, "New Stamp", "goods_shop_new", listing)
+        _add_chk(r2, "Popular Stamp", "goods_shop_popular", listing)
+
+        cat_frm = tk.Frame(sec1, bg=BG); cat_frm.pack(fill="x", pady=5)
+        if self.session.myshop_raw_prefs.get("manual_dropdowns", 0):
+            _, cat_m_v, cat_m_cb = _add_entry(cat_frm, "Main Category:", "goods_category", 26, listing)
+            _, cat0_v, self._cat0_cb = _add_entry(cat_frm, "Category 0:", "goods_category0", 22, listing)
+            _, cat1_v, self._cat1_cb = _add_entry(cat_frm, "Category 1:", "goods_category1", 22, listing)
+            _, cat2_v, self._cat2_cb = _add_entry(cat_frm, "Category 2:", "goods_category2", 16, listing)
+        else:
+            _, cat_m_v, cat_m_cb = _add_drop(cat_frm, "Main Category:", "goods_category", 26, self.MAIN_CATS, listing)
+            _, cat0_v, self._cat0_cb = _add_drop(cat_frm, "Category 0:", "goods_category0", 22, [], listing)
+            _, cat1_v, self._cat1_cb = _add_drop(cat_frm, "Category 1:", "goods_category1", 22, [], listing)
+            _, cat2_v, self._cat2_cb = _add_drop(cat_frm, "Category 2:", "goods_category2", 16, self.MC_CAT2, listing)
+
+        lu_frm = tk.Frame(sec1, bg=BG); lu_frm.pack(fill="x", pady=2)
+        if self.session.myshop_raw_prefs.get("manual_dropdowns", 0):
+            _, lu_v, _ = _add_entry(lu_frm, "Limit Use:", "goods_limit_use", 22, listing)
+            self._limit_use_v = lu_v
+        else:
+            _, lu_v, _ = _add_drop(lu_frm, "Limit Use:", "goods_limit_use", 22, ["0 - Boxes/Untimed", "1 - Timed Items", "2 - Fashion/Bulk Purchase"], listing)
+            self._limit_use_v = lu_v
+        self.lt_frm = tk.Frame(lu_frm, bg=BG)
+        _, lt_v, _ = _add_entry(self.lt_frm, "Limit Hrs:", "goods_limit_time", 8, listing)
+        
+        ext_f = tk.Frame(sec1, bg=BG); ext_f.pack(fill="x", pady=6)
+        sh_disc = tk.IntVar(value=listing.get("sh_disc", 0))
+        sh_char = tk.IntVar(value=listing.get("sh_char", 0))
+        sh_filt = tk.IntVar(value=listing.get("sh_filt", 0))
+        sh_prev = tk.IntVar(value=listing.get("sh_prev", 0))
+        
+        for v, t_txt, key in [(sh_disc, "Discount", "sh_disc"), (sh_char, "Character Limits", "sh_char"), (sh_filt, "Filter Codes", "sh_filt"), (sh_prev, "Preview Flags", "sh_prev")]:
+            tk.Checkbutton(ext_f, text=f"Show {t_txt}", variable=v, bg=BG, fg=FG_DIM, selectcolor=BG3, command=lambda _key=key, _v=v: listing.update({_key: _v.get()}) or self._build_screen()).pack(side="left", padx=5)
+
+        if sh_disc.get():
+            df = tk.Frame(sec1, bg=BG3); df.pack(fill="x", padx=10, pady=2)
+            tk.Label(df, text="Discount Config", bg=BG3, fg=ACC4).pack(anchor="w")
+            _add_entry(df, "Discount Price:", "discount_price", 10, listing)
+            _add_entry(df, "Start Date:", "discount_start_date", 20, listing)
+            _add_entry(df, "End Date:", "discount_end_date", 20, listing)
+            _add_entry(df, "Displ. Date:", "discount_display_date", 20, listing)
+        
+        if sh_char.get():
+            cf = tk.Frame(sec1, bg=BG3); cf.pack(fill="x", padx=10, pady=2)
+            tk.Label(cf, text="Character Limits", bg=BG3, fg=ACC4).pack(anchor="w")
+            _add_entry(cf, "Limit Desc:", "goods_limit_desc", 25, listing)
+            _add_entry(cf, "Min Level:", "goods_char_level", 8, listing)
+            if self.session.myshop_raw_prefs.get("manual_dropdowns", 0):
+                _add_entry(cf, "Char Sex:", "goods_char_sex", 8, listing, "0=All, 1=Male, 2=Female")
+                _add_entry(cf, "Char Type:", "goods_char_type", 8, listing, "15=All, etc")
+            else:
+                _add_drop(cf, "Char Sex:", "goods_char_sex", 20, [
+                    "0 - No Restriction", 
+                    "1 - Males Only", 
+                    "2 - Females Only"
+                ], listing)
+                _add_drop(cf, "Char Type:", "goods_char_type", 36, [
+                    "0 - Universal",
+                    "1 - Raccoon/Cat/Bunny/Buffalo",
+                    "2 - Lion/Fox/Sheep/Dragon",
+                    "4 - Lion/Fox/Sheep/Dragon (Alternate)",
+                    "8 - Raccoon/Cat/Bunny/Buffalo (Alternate)",
+                    "9 - Paula",
+                    "14 - Rare Coplin",
+                    "15 - Custom/Universal"
+                ], listing)
+
+        if sh_filt.get():
+            ff = tk.Frame(sec1, bg=BG3); ff.pack(fill="x", padx=10, pady=2)
+            tk.Label(ff, text="Filter Codes", bg=BG3, fg=ACC4).pack(anchor="w")
+            for i in range(1,5): _add_entry(ff, f"Filter {i}:", f"goods_filtercode{i}", 6, listing)
+            _add_entry(ff, "Filter Level:", "goods_filterlevel", 6, listing)
+
+        self._cb_refresh("init_load")
+
+        sec2 = mk_section(f, f"  GOODS_LIST (Contents: {len(listing['items'])} items)  ")
+        list_container = tk.Frame(sec2, bg=BG); list_container.pack(fill="x")
+
+        def _draw_sub_items():
+            for w in list_container.winfo_children(): w.destroy()
+            for i, i_dict in enumerate(listing["items"]):
+                box = tk.Frame(list_container, bg=BG2, bd=1, relief="solid")
+                box.pack(fill="x", pady=2, padx=4)
+                hk = tk.Frame(box, bg=BG4); hk.pack(fill="x")
+                tk.Label(hk, text=f"Item {i+1}", bg=BG4, fg=FG, font=("Consolas",9,"bold")).pack(side="left", padx=4)
+                if len(listing["items"]) > 1:
+                    tk.Button(hk, text="X", bg=ACC3, fg=BG, relief="flat", command=lambda _i=i: (listing["items"].pop(_i), _draw_sub_items(), self._handle_strict_unlock())).pack(side="right", padx=2, pady=1)
+
+                r1 = tk.Frame(box, bg=BG2); r1.pack(fill="x", pady=2)
+                _add_entry(r1, "Item Index:", "item_index", 14, i_dict)
+                _add_entry(r1, "Name:", "goods_name", 24, i_dict)
+                _add_entry(r1, "Count:", "item_count", 6, i_dict)
+                
+                r2 = tk.Frame(box, bg=BG2); r2.pack(fill="x", pady=2)
+                _add_entry(r2, "List Code:", "goods_list_code", 14, i_dict)
+                _add_entry(r2, "Parent Code:", "parents_list_code", 14, i_dict)
+                if self.session.myshop_raw_prefs.get("manual_dropdowns", 0):
+                    _add_entry(r2, "Class:", "item_class", 6, i_dict, "0=MyCamp, 1=Item, 2=Equip, 3=Drill")
+                else:
+                    _add_drop(r2, "Class:", "item_class", 20, [
+                        "0 - MyCamp Items",
+                        "1 - Item (Box/Use)",
+                        "2 - Equip (Fashion)",
+                        "3 - Drill"
+                    ], i_dict)
+
+                if sh_prev.get():
+                    r3 = tk.Frame(box, bg=BG3); r3.pack(fill="x", pady=2)
+                    for pf in ["pv_x","pv_y","pv_z","pv_d"]: _add_entry(r3, pf.replace("pv_","Preview "), pf, 4, i_dict)
+
+        _draw_sub_items()
+
+        def _add_new_sub():
+            self._handle_strict_unlock()
+            prev = listing["items"][-1]
+            try: nl = str(int(prev.get("goods_list_code",0)) + 1)
+            except: nl = ""
+            try: np = str(int(prev.get("parents_list_code",0)) + 1)
+            except: np = ""
+            listing["items"].append({
+                "item_index": "",
+                "goods_name": "",
+                "item_count": "1",
+                "item_class": "2",
+                "goods_list_code": nl,
+                "parents_list_code": np,
+                "pv_x": "", "pv_y": "", "pv_z": "", "pv_d": ""
+            })
+            if len(listing["items"]) > 1:
+                listing["goods_limit_use"] = "2 - Fashion/Bulk Purchase"
+                if hasattr(self, '_limit_use_v'):
+                    self._limit_use_v.set("2 - Fashion/Bulk Purchase")
+            _draw_sub_items()
+
+        tk.Button(sec2, text="+ Add Sub-Item to Set", bg=ACC1, fg=BG, font=("Consolas",9,"bold"), relief="flat", command=_add_new_sub).pack(pady=6)
+
+        foot = tk.Frame(f, bg=BG); foot.pack(fill="x", pady=15)
+        
+        md_v = tk.IntVar(value=self.session.myshop_raw_prefs.get("manual_dropdowns", 0))
+        def _toggle_md():
+            self.session.myshop_raw_prefs["manual_dropdowns"] = md_v.get()
+            self._build_screen()
+        tk.Checkbutton(foot, text="Manual Mode for All Dropdowns (Bypass limitations)", variable=md_v, command=_toggle_md, bg=BG, fg=FG_DIM, selectcolor=BG3, font=("Consolas", 8)).pack(pady=(0,8))
+        
+        mk_btn(foot, "Generate Script (All Listings)", self._generate_outputs, color=GREEN, fg=BG2).pack()
+
+    def _handle_strict_unlock(self):
+        idx = self._current_idx
+        if self._listings[idx].get("strict_code"):
+            self._listings[idx]["strict_code"] = 0
+            if hasattr(self, '_strict_var'):
+                self._strict_var.set(0)
+
+    def _cb_refresh(self, key):
+        idx = self._current_idx
+        listing = self._listings[idx]
+        
+        # Limit Use handling
+        if listing.get("goods_limit_use","").startswith("1"):
+            self.lt_frm.pack(side="left", padx=10)
+        else:
+            self.lt_frm.pack_forget()
+
+        # Category handling
+        main_cat = listing.get("goods_category", "1")
+        is_myshop = main_cat.startswith("1 - MyShop")
+        
+        if self.session.myshop_raw_prefs.get("manual_dropdowns", 0):
+            return
+
+        c0_list = self.MS_CAT0 if is_myshop else self.MC_CAT0
+        self._cat0_cb["values"] = c0_list
+        c0_val = listing.get("goods_category0", "")
+        if c0_val not in c0_list and c0_list:
+            c0_val = c0_list[0]
+            listing["goods_category0"] = c0_val
+            self._cat0_cb.set(c0_val)
+
+        c0_num = c0_val.split(" ")[0]
+        c1_dict = self.MS_CAT1 if is_myshop else self.MC_CAT1
+        c1_list = c1_dict.get(c0_num, ["0 - None"])
+        self._cat1_cb["values"] = c1_list
+        
+        c1_val = listing.get("goods_category1", "")
+        if c1_val not in c1_list and c1_list:
+            c1_val = c1_list[0]
+            listing["goods_category1"] = c1_val
+            self._cat1_cb.set(c1_val)
+
+        if not is_myshop:
+            self._cat2_cb["values"] = self.MC_CAT2
+        else:
+            self._cat2_cb["values"] = ["0 - None", "1 - Pets??"]
+
+    def _go(self, idx):
+        if idx >= len(self._listings):
+            prev = self._listings[-1]
+            try: ngc = str(int(prev.get("goods_code",0)) + 1)
+            except: ngc = ""
+            base_nl = ""
+            base_np = ""
+            try:
+                last_sub = prev["items"][-1]
+                base_nl = str(int(last_sub.get("goods_list_code", 0)) + 1)
+                base_np = str(int(last_sub.get("parents_list_code", 0)) + 1)
+            except: pass
+
+            new_dict = {}
+            for k,v in prev.items():
+                if k not in ["items","goods_code"]: new_dict[k] = v
+            new_dict["goods_code"] = ngc
+            new_dict["goods_name"] = ""
+            sub = {
+                "item_index": "", "goods_name": "", "item_count": "1", "item_class": "1",
+                "goods_list_code": base_nl, "parents_list_code": base_np,
+                "pv_x": "", "pv_y": "", "pv_z": "", "pv_d": ""
+            }
+            if new_dict.get("strict_code", 1):
+                sub["goods_list_code"] = ngc
+                sub["parents_list_code"] = ngc
+                sub["item_index"] = ngc
+            new_dict["items"] = [sub]
+            self._listings.append(new_dict)
+        self._current_idx = idx
+        self._build_screen()
+
+    def _generate_outputs(self):
+        xml_blocks, sql_goods, sql_list, sql_limit = [], [], [], []
+        today = datetime.date.today().strftime("%Y-%m-%d")
+
+        for lis in self._listings:
+            gc = lis.get("goods_code", "0")
+            name = lis.get("goods_name", "").strip()
+            if not gc or not name: continue
+
+            desc = lis.get("goods_desc", "")
+            set_cnt = len(lis["items"])
+            lu = lis.get("goods_limit_use", "0").split(" ")[0]
+            lt = lis.get("goods_limit_time", "0") if lu == "1" else "0"
+            price = lis.get("goods_cash_price", "0")
+            nw = lis.get("goods_shop_new", 0)
+            pop = lis.get("goods_shop_popular", 0)
+            
+            main_cat = lis.get("goods_category", "1")
+            cat = "1" if main_cat.startswith("1") else "2" # 1 For MyShop or Space, 2 for Fur
+            
+            cat0 = lis.get("goods_category0", "11").split(" ")[0]
+            cat1 = lis.get("goods_category1", "101").split(" ")[0]
+            cat2 = lis.get("goods_category2", "0").split(" ")[0]
+            lvl = lis.get("goods_char_level", "0")
+            sex = lis.get("goods_char_sex", "0")
+            ctype = lis.get("goods_char_type", "15")
+            ldesc = lis.get("goods_limit_desc", "All Characters")
+            issell = lis.get("goods_issell", 1)
+            fc1 = lis.get("goods_filtercode1", "0")
+            fc2 = lis.get("goods_filtercode2", "0")
+            fc3 = lis.get("goods_filtercode3", "0")
+            fc4 = lis.get("goods_filtercode4", "0")
+            flvl = lis.get("goods_filterlevel", "0")
+            dp = lis.get("discount_price", "0")
+            dsd = lis.get("discount_start_date", "1900-01-01 00:00:00")
+            ded = lis.get("discount_end_date", "1900-01-01 00:00:00")
+            ddate = lis.get("discount_display_date", "")
+
+            xml = (
+                f'\t\t<GOODS goods_code="{gc}" goods_name="{name}" '
+                f'goods_desc="{desc}" goods_set_count="{set_cnt}" goods_limit_use="{lu}" '
+                f'goods_limit_time="{lt}" goods_cash_price="{price}" '
+                f'goods_shop_new="{nw}" goods_shop_popular="{pop}" '
+                f'goods_category="{cat}" goods_category0="{cat0}" goods_category1="{cat1}" '
+                f'goods_category2="{cat2}" goods_limit_desc="{ldesc}" '
+                f'goods_char_level="{lvl}" goods_char_sex="{sex}" goods_char_type="{ctype}" '
+                f'goods_issell="{issell}" goods_created="{today.replace("-","")}" '
+                f'goods_filtercode1="{fc1}" goods_filtercode2="{fc2}" '
+                f'goods_filtercode3="{fc3}" goods_filtercode4="{fc4}" goods_filterlevel="{flvl}" '
+                f'goods_discount_price="{dp}" discount_start_date="{dsd}" '
+                f'discount_end_date="{ded}" discount_display_date="{ddate}">\n'
+            )
+
+            for sub in lis["items"]:
+                idx = sub.get("item_index", "0")
+                iname = sub.get("goods_name", name)
+                cnt = sub.get("item_count", "1")
+                cls = sub.get("item_class", "1")
+                glc = sub.get("goods_list_code", "0")
+                plc = sub.get("parents_list_code", "0")
+                vx,vy,vz,vd = sub.get("pv_x",""), sub.get("pv_y",""), sub.get("pv_z",""), sub.get("pv_d","")
+                xml += (
+                    f'\t\t\t<GOODS_LIST item_index="{idx}" goods_name="{iname}" '
+                    f'item_count="{cnt}" item_class="{cls}" preview_x="{vx}" preview_y="{vy}" '
+                    f'preview_z="{vz}" preview_d="{vd}" goods_list_code="{glc}" '
+                    f'parents_list_code="{plc}" />\n'
+                )
+            xml += f'\t\t</GOODS>'
+            xml_blocks.append(xml)
+
+            sql_cat2 = "2" if cat1 == "113" else "0"
+            sql_goods.append(
+                f"INSERT INTO gmg_account.dbo.tbl_goods ("
+                f"goods_code, goods_name, goods_desc, goods_capacity, goods_category, "
+                f"goods_set_count, goods_item_index, goods_item_count, "
+                f"goods_limit_use, goods_limit_time, goods_cash_price, goods_created, "
+                f"goods_shop_new, goods_shop_popular, goods_sellcount, "
+                f"goods_category0, goods_category1, goods_category2, "
+                f"goods_limit_desc, goods_char_level, goods_char_sex, goods_char_type, "
+                f"version_code, goods_issell, goods_image"
+                f") VALUES ("
+                f"{gc}, N'{name.replace(chr(39),chr(39)+chr(39))}', N'{desc.replace(chr(39),chr(39)+chr(39))}', NULL, 0, "
+                f"{set_cnt}, NULL, NULL, "
+                f"{lu}, NULL, {price}, '{today} 00:00:00', "
+                f"{nw}, {pop}, 0, "
+                f"{cat0}, {cat1}, {sql_cat2}, "
+                f"N'{ldesc}', {lvl}, {sex}, {ctype}, "
+                f"{lis['items'][0].get('goods_list_code', gc)}, {issell}, ''"
+                f");"
+            )
+
+            sql_limit.append(
+                f"INSERT INTO gmg_account.dbo.tbl_goods_limit ("
+                f"goods_code, limit_code, goods_limit_price, default_display"
+                f") VALUES ("
+                f"{gc}, {lu}, {price}, 1"
+                f");"
+            )
+
+            for sub in lis["items"]:
+                glc = sub.get("goods_list_code", "0")
+                plc = sub.get("parents_list_code", "0")
+                idx = sub.get("item_index", "0")
+                cnt = sub.get("item_count", "1")
+                cls = sub.get("item_class", "1")
+                sql_list.append(
+                    f"INSERT INTO gmg_account.dbo.tbl_goods_list ("
+                    f"goods_code, item_index, item_count, goods_scode, item_class, "
+                    f"preview_x, preview_y, preview_z, preview_d, goods_list_code, parents_list_code, goods_list_limit"
+                    f") VALUES ("
+                    f"{idx}, {idx}, {cnt}, {idx}, {cls}, "
+                    f"'{sub.get('pv_x', '')}', '{sub.get('pv_y', '')}', '{sub.get('pv_z', '')}', '{sub.get('pv_d', '')}', {glc}, {plc}, NULL"
+                    f");"
+                )
+
+        if not xml_blocks:
+            return messagebox.showinfo("Empty", "No listings filled with proper Index + Name.")
+
+        full_sql = "-- tbl_goods\n" + "\n".join(sql_goods) + "\n\n-- tbl_goods_list\n" + "\n".join(sql_list) + "\n\n-- tbl_goods_limit\n" + "\n".join(sql_limit)
+        full_xml = "\n".join(xml_blocks)
+
+        wins = tk.Toplevel(self.root); wins.title("MyShop Output"); wins.geometry("1100x700"); wins.configure(bg=BG)
+        nb = ttk.Notebook(wins); nb.pack(fill="both", expand=True)
+        make_output_tab = globals().get("make_output_tab")
+        if make_output_tab:
+            make_output_tab(nb, "libcmgds_e XML", full_xml, "myshop_gen_lib.xml", wins)
+            make_output_tab(nb, "SQL DB", full_sql, "myshop_gen_sql.sql", wins)
+        else: _show_text_window("libcmgds_e XML", full_xml, wins)
+
 class ToolboxSwapper(tk.Frame):
     """XML ↔ CSV converter for use with TO-Toolbox (Trickster Online Toolbox) files only.
     XML→CSV exports a structured table to a spreadsheet-friendly format.
@@ -11584,6 +12267,7 @@ TOOLS = [
     ("16", "Mass Variable\nManip.",      ACC14, MassVarManip),
     ("17", "XML Bulk\nUpdater",           ACC18, XMLBulkUpdater),
     ("18", "Toolbox\nSwapper",            ACC19, ToolboxSwapper),
+    ("19", "MyShop Lib\n& DB Gen", "#ff9e99", MyShopTool),
 ]
 
 class CombinedApp(tk.Tk):
