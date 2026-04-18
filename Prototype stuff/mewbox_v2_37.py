@@ -1,3 +1,15 @@
+"""
+Mewsie's ItemParam Toolbox — v15
+  Box XML Generator  (live validation, last-ID memory, compound/exchange output)
+  ItemParam Generator (dropdown selectors, tooltips, compound/exchange, PresentItemParam)
+  Box Rate / Count Adjuster
+  NCash Updater (simple CSV)
+  NCash Updater (parent-box CSV + sub-box)
+  NCash ↔ Ticket Calculator
+
+Run: python box_tool_suite.py
+"""
+
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 import csv
@@ -27,27 +39,6 @@ except ImportError:
 import threading
 import time as _time_module
 
-# ══════════════════════════════════════════════════════════════════════════════
-# LOVE YOU TRICKSTER COMMUNITY
-# ══════════════════════════════════════════════════════════════════════════════
-# ══════════════════════════════════════════════════════════════════════════════
-# MAY THIS HELP THE MAINTENANCES THAT PLAGUED MY EXISTENCE AS A GM
-# ══════════════════════════════════════════════════════════════════════════════
-# ══════════════════════════════════════════════════════════════════════════════
-# FOR GENERATIONS OF SERVERS TO COME
-# ══════════════════════════════════════════════════════════════════════════════
-# ══════════════════════════════════════════════════════════════════════════════
-# SHINE BRIGHT -- SOMEONE OUT THERE LOVES YOU DEARLY. EVEN IF IT'S JUST YOU.
-# ══════════════════════════════════════════════════════════════════════════════
-# ══════════════════════════════════════════════════════════════════════════════
-# YOU MATTER. NOW GO MAKE A DIFFERENCE.
-# ══════════════════════════════════════════════════════════════════════════════
-# ══════════════════════════════════════════════════════════════════════════════
-# I CAN'T CODE SO THIS IS THE BEST I GOT!
-# ══════════════════════════════════════════════════════════════════════════════
-# ══════════════════════════════════════════════════════════════════════════════
-# - MEWSIE
-# ══════════════════════════════════════════════════════════════════════════════
 # ══════════════════════════════════════════════════════════════════════════════
 # SHARED — character / options data  (used by BoxXMLGenerator)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -786,7 +777,7 @@ def build_itemparam_row(cfg):
 <Type>15</Type>
 <SubType>0</SubType>
 <ItemFType>0</ItemFType>
-<Name><![CDATA[{cfg['name']}]]></Name>
+<n><![CDATA[{cfg['name']}]]></n>
 <Comment><![CDATA[{cfg['comment']}]]></Comment>
 <Use><![CDATA[{cfg['use']}]]></Use>
 <Name_Eng><![CDATA[ ]]></Name_Eng>
@@ -911,10 +902,8 @@ def real_drop_slots(block):
     return [(int(i),v) for i,v in sorted(pairs,key=lambda x:int(x[0])) if v!="0"]
 
 def apply_cfg_to_row(block, cfg):
-    if "type" in cfg:
-        block = _set_tag(block,"Type",str(cfg["type"]))
-    if "drop_cnt" in cfg:
-        block = _set_tag(block,"DropCnt",str(cfg["drop_cnt"]))
+    block = _set_tag(block,"Type",str(cfg["type"]))
+    block = _set_tag(block,"DropCnt",str(cfg["drop_cnt"]))
     for pos,(idx,_) in enumerate(real_drop_slots(block)):
         sc = cfg["slots"][pos] if pos<len(cfg["slots"]) else {"rate":100,"count":1}
         block = _set_tag(block,f"DropRate_{idx}",str(sc["rate"]))
@@ -1321,7 +1310,6 @@ class AppSession:
         self.present_xml_path = None
         self.compound_rows     = []   # CompoundExchangeShop compound row tuples
         self.exchange_rows     = []   # CompoundExchangeShop exchange row tuples
-        self.myshop_raw_prefs  = {}
 
 # ══════════════════════════════════════════════════════════════════════════════
 # GLOBAL APP SETTINGS  (gear menu, libconfig dir, filename overrides, timestamp)
@@ -1342,8 +1330,7 @@ _DEFAULT_APP_SETTINGS = {
         "recycle_except":       "RecycleExceptItem.xml",
         "box_id_csv":           "box_id_list.csv",
         "set_item_param":       "CMSetItemParam.xml",
-    },
-    "csv_exports_dir": "",
+    }
 }
 
 def _load_app_settings():
@@ -1358,7 +1345,6 @@ def _load_app_settings():
         out["other_filenames"] = dict(_DEFAULT_APP_SETTINGS["other_filenames"])
         out["other_filenames"].update(d.get("other_filenames", {}))
         out["bypass_file_dialogs"] = d.get("bypass_file_dialogs", False)
-        out["csv_exports_dir"] = d.get("csv_exports_dir", "")
         return out
     except:
         return dict(_DEFAULT_APP_SETTINGS)
@@ -1551,14 +1537,7 @@ def _open_settings_window(root):
         try: _ypos = canv.yview()[0]
         except: _ypos = 0.0
         for w in container_frame.winfo_children(): w.destroy()
-        _ALPHA_SORT = {
-            "cmsetitemparam.xml":0,"compound_potion.xml":1,"compounder_spot.xml":2,
-            "exchangeshopcontents.xml":3,"exchange_location.xml":4,
-            "itemparam2.xml":5,"presentitemparam2.xml":6,
-            "r_shopitem.xml":7,"recycleexceptitem.xml":8,
-        }
-        items = order_list if fn_sort_var.get() == "tool" else sorted(
-            order_list, key=lambda x: _ALPHA_SORT.get(x[2].lower(), 99))
+        items = order_list if fn_sort_var.get() == "tool" else sorted(order_list, key=lambda x: x[2])
         for key, tool_lbl, default in items:
             rr = tk.Frame(container_frame, bg=BG); rr.pack(fill="x", pady=2)
             lbl_text = f"{default}  [{tool_lbl}]"
@@ -1615,19 +1594,6 @@ def _open_settings_window(root):
         d = filedialog.askdirectory(title="Select MyShop folder", parent=win)
         if d: ms_var.set(d)
     mk_btn(r_ms, "📂  Browse", _pick_ms, color=BG4, font=("Consolas",9)).pack(side="left")
-
-    # ── CSV Exports directory (Toolbox Swapper output) ────────────────────
-    s_csv = mk_section(C, "  CSV Exports Directory  (Toolbox Swapper output)")
-    csv_dir_var = tk.StringVar(value=s.get("csv_exports_dir", "") or os.path.join(os.getcwd(), "csv_exports"))
-    r_csv = tk.Frame(s_csv, bg=BG); r_csv.pack(fill="x", padx=8, pady=6)
-    tk.Entry(r_csv, textvariable=csv_dir_var, width=52, bg=BG3, fg=FG,
-             insertbackground=FG, font=("Consolas", 9), relief="flat").pack(side="left", padx=(0,6))
-    def _pick_csv_dir():
-        d = filedialog.askdirectory(title="Select CSV exports folder", parent=win)
-        if d: csv_dir_var.set(d)
-    mk_btn(r_csv, "📂  Browse", _pick_csv_dir, color=BG4, font=("Consolas",9)).pack(side="left")
-    tk.Label(s_csv, text="  CSV output from Toolbox Swapper is written here.",
-             bg=BG, fg=FG_GREY, font=("Consolas", 8)).pack(anchor="w", padx=10, pady=(0,4))
 
     # ── UI / Performance ───────────────────────────────────────────────────
     s_perf = mk_section(C, "  UI & Performance")
@@ -1826,7 +1792,6 @@ def _open_settings_window(root):
         s["libconfig_dir"]   = dir_var.get().strip() or os.path.join(os.getcwd(), "libconfig")
         s["reports_dir"]     = rpt_var.get().strip() or os.path.join(os.getcwd(), "reports")
         s["myshop_dir"]      = ms_var.get().strip() or os.path.join(os.getcwd(), "MyShop")
-        s["csv_exports_dir"] = csv_dir_var.get().strip()
         s["tooltips_enabled"]= tt_var.get()
         s["timestamp_files"] = ts_var.get()
         s["advanced_renaming_enabled"] = adv_var.get()
@@ -2003,8 +1968,6 @@ class BoxXMLGenerator(tk.Frame):
                  bg=BG, fg=ACC1).pack(pady=(30,5))
         tk.Label(frm, text="Load a spreadsheet (CSV or Excel) to batch-generate box XML rows.",
                  bg=BG, fg=FG_DIM, font=("Consolas",10)).pack(pady=5)
-        tk.Label(frm, text="NOTE: libcmgds_e generation is currently for Polar files only and will not work with Season 2 files.",
-                 bg=BG, fg=ACC3, font=("Consolas",9,"bold")).pack(pady=2)
         info_frm = tk.Frame(frm, bg=BG2); info_frm.pack(pady=6, padx=20, fill="x")
         tk.Label(info_frm,
             text=(
@@ -2556,8 +2519,8 @@ class BoxXMLGenerator(tk.Frame):
                        variable=myshop_var, bg=BG, fg=FG, selectcolor=BG3,
                        activebackground=BG, font=("Consolas",9),
                        command=_toggle_ms_body).pack(side="left")
-        tk.Label(ms_hdr, text="  (exports to MyShop folder)   * Polar Files Only *", bg=BG, fg=ACC3,
-                 font=("Consolas",8,"bold")).pack(side="left")
+        tk.Label(ms_hdr, text="  (exports to MyShop folder)", bg=BG, fg=FG_GREY,
+                 font=("Consolas",8)).pack(side="left")
 
         ms_body = tk.Frame(myshop_sec, bg=BG)
         # Only show body when checkbox is enabled
@@ -3432,9 +3395,9 @@ class BoxRateAdjuster(tk.Frame):
                     except: rw_dc = len(slots)
                 else:
                     rw_dc = len(slots)
-                cfg={"type":rw_type,"drop_cnt":rw_dc,"slots":slot_cfgs}
             else:
-                cfg={"slots":slot_cfgs}
+                rw_type = 2; rw_dc = len(slots)
+            cfg={"type":rw_type,"drop_cnt":rw_dc,"slots":slot_cfgs}
             new_row=apply_cfg_to_row(row,cfg)
             drop_ids=[v for _,v in real_drop_slots(new_row)]
             name=next((n for r,n,_,_,_ in matched if r==rid),"")
@@ -3660,11 +3623,7 @@ class BoxRateAdjuster(tk.Frame):
         def replace_row(m):
             row=m.group(0); rid=_get_tag(row,"Id")
             if rid not in self.manual_configs: return row
-            cfg = self.manual_configs[rid]
-            if not self._rewrite_params.get():
-                cfg.pop("type", None)
-                cfg.pop("drop_cnt", None)
-            new_row=apply_cfg_to_row(row,cfg)
+            new_row=apply_cfg_to_row(row,self.manual_configs[rid])
             drop_ids=[v for _,v in real_drop_slots(new_row)]
             name=_name_map.get(rid,"")
             csv_rows.append([rid,name,*drop_ids]); return new_row
@@ -4879,7 +4838,7 @@ def build_generic_itemparam_row(cfg):
         f"<Type>{cfg.get('type_val','15')}</Type>",
         f"<SubType>{cfg.get('subtype_val','0')}</SubType>",
         f"<ItemFType>{cfg.get('itemftype_val','0')}</ItemFType>",
-        f"<Name>{_cd(cfg.get('name',''))}</Name>",
+        f"<n>{_cd(cfg.get('name',''))}</n>",
         f"<Comment>{_cd(cfg.get('comment',''))}</Comment>",
         f"<Use>{_cd(cfg.get('use',''))}</Use>",
         f"<Name_Eng>{_cd(cfg.get('name_eng',' '))}</Name_Eng>",
@@ -6258,7 +6217,7 @@ def _build_box_myshop_outputs(box_configs):
             f'goods_category="1" goods_category0="11" goods_category1="{goods_cat1_xml}" '
             f'goods_category2="0" goods_limit_desc="All Characters" '
             f'goods_char_level="{level}" goods_char_sex="0" goods_char_type="15" '
-            f'goods_issell="1" goods_created="{created.replace("-","")}" '
+            f'goods_issell="0" goods_created="{created.replace("-","")}" '
             f'goods_filtercode1="0" goods_filtercode2="0" goods_filtercode3="0" '
             f'goods_filtercode4="0" goods_filterlevel="0" '
             f'discount_start_date="1900-01-01 00:00:00" '
@@ -6288,7 +6247,7 @@ def _build_box_myshop_outputs(box_configs):
             f"{new_stamp}, {pop_stamp}, 0, "
             f"11, 3, {sql_cat2}, "
             f"N'All Characters', {level}, 0, 15, "
-            f"{version}, 1, ''"
+            f"{version}, 0, ''"
             f");"
         )
 
@@ -6303,7 +6262,7 @@ def _build_box_myshop_outputs(box_configs):
             f") VALUES ("
             f"{box_id}, {box_id}, {item_count}, {box_id}, 1, "
             f"NULL, NULL, NULL, NULL, "
-            f"{glc}, {glc}, NULL"
+            f"{glc}, {glc}, 0"
             f");"
         )
 
@@ -6315,7 +6274,7 @@ def _build_box_myshop_outputs(box_configs):
             f"INSERT INTO gmg_account.dbo.tbl_goods_limit ("
             f"goods_code, limit_code, goods_limit_price, default_display"
             f") VALUES ("
-            f"{box_id}, {limit_use}, {price}, 1"
+            f"{box_id}, {limit_use}, {price}, True"
             f");"
         )
 
@@ -7001,14 +6960,14 @@ _SET_COL_GUIDE = (
     "CMSetItemParam CSV / Excel column guide:\n\n"
     "Layout A — one row per set  (SetID column present):\n"
     "  SetID / Set ID     → the set's own <ID> tag\n"
-    "  Name / Set Name    → the set's <Name> name (CDATA)\n"
+    "  Name / Set Name    → the set's <n> name (CDATA)\n"
     "  ID  (repeated)     → item IDs for Item0..Item7\n"
     "  Item0..Item7  or  0..7   → item IDs by slot\n"
     "  Item Name / Name of Item / Box Name / Name of Box\n"
     "                     → inline <!-- comment --> next to each item\n\n"
     "Layout B — multiple rows per set  (group-header style):\n"
     "  Any column whose header is not a recognised keyword\n"
-    "    becomes the set's group name (its <Name>)\n"
+    "    becomes the set's group name (its <n>)\n"
     "  ID column          → item IDs (one per row)\n"
     "  Item Name / Name of Item → inline <!-- comment -->\n"
     "  SetID column       → the set's <ID> (optional)\n\n"
@@ -7110,7 +7069,7 @@ class SetItemGenerator(tk.Frame):
         _lr(s1, "SetID: ⚠ REQUIRED", v_set_id, 14,
             "The Set's own unique ID.  This is the <ID> tag in CMSetItemParam.xml.")
         _lr(s1, "Set Name:", v_set_name, 40,
-            "The display name for this set.  Stored as <Name><![CDATA[...]]></Name>.")
+            "The display name for this set.  Stored as <n><![CDATA[...]]></n>.")
 
         # Items section
         s2 = mk_section(C, "  Items (Item0 – Item7)  —  ID = item inside the set")
@@ -7442,7 +7401,7 @@ class ItemParamGenerator(tk.Frame):
         tk.Label(center, text="ITEMPARAM GENERATOR",
                  font=("Consolas", 20, "bold"), bg=BG, fg=self.ACC).pack(pady=(40, 4))
         tk.Label(center,
-                 text="Mewsie's Multi-XML Toolbox — build full <ROW> entries for any item type.",
+                 text="Mewsie's ItemParam Toolbox — build full <ROW> entries for any item type.",
                  bg=BG, fg=FG_DIM, font=("Consolas", 10)).pack(pady=(0, 6))
 
         info = tk.Frame(center, bg=BG2); info.pack(pady=8, padx=20, fill="x")
@@ -9193,8 +9152,6 @@ ACC14 = "#fab387"  # peach       — Mass Variable Manipulation
 ACC15 = "#94e2d5"  # teal        — Reorder XML
 ACC16 = "#f38ba8"  # red         — ID Checker
 ACC17 = "#b4befe"  # lavender    — Fix ItemParam
-ACC18 = "#cba6f7"  # purple      — XML Bulk Updater
-ACC19 = "#a6e3a1"  # green       — Toolbox Swapper
 
 
 def _reports_dir():
@@ -9298,50 +9255,20 @@ def _count_rows_in_file(path):
 
 
 def _update_rowcount_in_file(path):
-    """Update RowCount='N' (ItemParam-style) or CHARACTER/MYCAMP count="N" (libcmgds_e-style).
-    Returns (old, new) or None if neither found.
-    For libcmgds_e: counts parent <GOODS tags ONLY within each section body separately."""
+    """Update RowCount='N' (ItemParam-style) or CHARACTER count="N" (libcmgds_e-style).
+    Returns (old, new) or None if neither found."""
     text = open(path, encoding="utf-8", errors="replace").read()
 
-    # ── libcmgds_e: <CHARACTER count="N"> and/or <MYCAMP count="N"> ──────────
-    # Match each section and count <GOODS  (with space/newline after) WITHIN only that section's body.
-    # This avoids cross-contamination between CHARACTER and MYCAMP counts.
-    char_pat  = re.compile(r'(<CHARACTER\s+count=")(\d+)(")(.*?)(</CHARACTER>)', re.DOTALL)
-    mycamp_pat = re.compile(r'(<MYCAMP\s+count=")(\d+)(")(.*?)(</MYCAMP>)', re.DOTALL)
-
-    char_mc   = char_pat.search(text)
-    mycamp_mc = mycamp_pat.search(text)
-
-    if char_mc or mycamp_mc:
-        new_text = text
-        results  = []  # list of (old, new) per section
-
-        if char_mc:
-            body = char_mc.group(4)
-            goods_count = len(re.findall(r'<GOODS[\s\n\r]', body))
-            old = int(char_mc.group(2))
-            # Replace only the count attribute of the CHARACTER tag
-            new_text = new_text[:char_mc.start(2)] + str(goods_count) + new_text[char_mc.end(2):]
-            results.append((old, goods_count))
-
-        if mycamp_mc:
-            # Re-search in updated new_text since offsets may have shifted
-            mc2 = mycamp_pat.search(new_text)
-            if mc2:
-                body2 = mc2.group(4)
-                goods_count2 = len(re.findall(r'<GOODS[\s\n\r]', body2))
-                old2 = int(mc2.group(2))
-                new_text = new_text[:mc2.start(2)] + str(goods_count2) + new_text[mc2.end(2):]
-                results.append((old2, goods_count2))
-
-        with open(path, "w", encoding="utf-8", newline="") as f:
+    # ── libcmgds_e: <CHARACTER count="N"> — count <GOODS  occurrences ────
+    char_pat = re.compile(r'(<CHARACTER\s+count=")(\d+)(")')
+    mc = char_pat.search(text)
+    if mc:
+        goods_count = text.count("<GOODS ")
+        old = int(mc.group(2))
+        new_text = char_pat.sub(lambda x: x.group(1) + str(goods_count) + x.group(3), text, count=1)
+        with open(path, "w", encoding="utf-8") as f:
             f.write(new_text)
-
-        # Return combined summary as (char_old|mycamp_old, char_new|mycamp_new) tuple pairs
-        if len(results) == 1:
-            return results[0]
-        # Multiple sections: return composite so caller can log both
-        return results  # list of (old, new) tuples
+        return old, goods_count
 
     # ── ItemParam-style: RowCount='N' ─────────────────────────────────────
     count = text.count("<ROW>")
@@ -9354,7 +9281,6 @@ def _update_rowcount_in_file(path):
     with open(path, "w", encoding="utf-8") as f:
         f.write(new_text)
     return old, count
-
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -9407,20 +9333,13 @@ class RowCounterUpdater(tk.Frame):
         self._txt.config(state="normal"); self._txt.delete("1.0","end"); self._txt.config(state="disabled")
         n = _count_rows_in_file(path)
         self._log(f"File: {os.path.basename(path)}")
+        self._log(f"  <ROW> count: {n:,}")
         result = _update_rowcount_in_file(path)
-        if not result:
-            self._log(f"  <ROW> count: {n:,}")
-            self._log("  (No RowCount/count attribute found — nothing to update)")
-        elif isinstance(result, list):
-            # libcmgds_e with multiple sections (CHARACTER + MYCAMP)
-            labels = ["CHARACTER", "MYCAMP"]
-            for i, (old, new) in enumerate(result):
-                lbl = labels[i] if i < len(labels) else f"Section {i+1}"
-                self._log(f"  [{lbl}] count updated: {old} → {new}")
-        else:
+        if result:
             old, new = result
-            self._log(f"  <ROW> count: {n:,}")
             self._log(f"  RowCount updated: {old} → {new}")
+        else:
+            self._log("  (No RowCount attribute found — nothing to update)")
 
     def _count_folder(self):
         folder = filedialog.askdirectory(title="Select folder", parent=self.root)
@@ -9435,19 +9354,11 @@ class RowCounterUpdater(tk.Frame):
             n = _count_rows_in_file(p)
             total += n
             result = _update_rowcount_in_file(p)
-            if not result:
-                self._log(f"  {fname}: {n:,} rows  (no count attribute)")
-            elif isinstance(result, list):
-                # libcmgds_e multi-section
-                labels = ["CHARACTER", "MYCAMP"]
-                parts = ", ".join(
-                    f"{labels[i] if i < len(labels) else 'Sec'+str(i+1)}: {old}→{new}"
-                    for i, (old, new) in enumerate(result)
-                )
-                self._log(f"  {fname}  [{parts}]")
-            else:
+            suffix = ""
+            if result:
                 old, new = result
-                self._log(f"  {fname}: {n:,} rows  [RowCount: {old} → {new}]")
+                suffix = f"  [RowCount: {old} → {new}]"
+            self._log(f"  {fname}: {n:,} rows{suffix}")
         self._log(f"\nTotal: {total:,} rows across {len(xmls)} files")
 
 
@@ -10178,43 +10089,14 @@ class MassVarManip(tk.Frame):
         # Expression/value
         expr_f = mk_section(C, "  Expression / Value / Pattern → Replacement")
         er = tk.Frame(expr_f,bg=BG); er.pack(fill="x",padx=8,pady=6)
-        self._lbl_from = tk.Label(er, text="From / Expr:", bg=BG, fg=FG, font=("Consolas",9), width=18, anchor="e")
-        self._lbl_from.pack(side="left")
+        tk.Label(er, text="From / Expr:", bg=BG, fg=FG, font=("Consolas",9), width=14, anchor="w").pack(side="left")
         self._from_var = tk.StringVar()
-        self._ent_from = tk.Entry(er, textvariable=self._from_var, width=32, bg=BG3, fg=FG,
-                 insertbackground=FG, font=("Consolas",9), relief="flat")
-        self._ent_from.pack(side="left",padx=4)
-        self._lbl_to = tk.Label(er, text="To:", bg=BG, fg=FG_DIM, font=("Consolas",9), width=14, anchor="e")
-        self._lbl_to.pack(side="left",padx=(8,2))
+        tk.Entry(er, textvariable=self._from_var, width=36, bg=BG3, fg=FG,
+                 insertbackground=FG, font=("Consolas",9), relief="flat").pack(side="left",padx=4)
+        tk.Label(er, text="To:", bg=BG, fg=FG_DIM, font=("Consolas",9)).pack(side="left",padx=(8,2))
         self._to_var = tk.StringVar()
-        self._ent_to = tk.Entry(er, textvariable=self._to_var, width=20, bg=BG3, fg=FG,
-                 insertbackground=FG, font=("Consolas",9), relief="flat")
-        self._ent_to.pack(side="left",padx=2)
-
-        def _update_labels(*_):
-            op = self._op_var.get()
-            if op == "math":
-                self._lbl_from.config(text="Expr (Optional):", fg=FG)
-                self._ent_from.config(state="normal")
-                self._lbl_to.config(text="Expr (Optional):", fg=FG_DIM)
-                self._ent_to.config(state="normal")
-            elif op == "set":
-                self._lbl_from.config(text="Value (Optional):", fg=FG_DIM)
-                self._ent_from.config(state="normal")
-                self._lbl_to.config(text="Value (Optional):", fg=self.ACC)
-                self._ent_to.config(state="normal")
-            elif op == "replace":
-                self._lbl_from.config(text="Find text:", fg=FG)
-                self._ent_from.config(state="normal")
-                self._lbl_to.config(text="Replace with:", fg=self.ACC)
-                self._ent_to.config(state="normal")
-            else:
-                self._lbl_from.config(text="Pattern:", fg=FG)
-                self._ent_from.config(state="normal")
-                self._lbl_to.config(text="Replacement:", fg=self.ACC)
-                self._ent_to.config(state="normal")
-        self._op_var.trace_add("write", _update_labels)
-        self.root.after(10, _update_labels)
+        tk.Entry(er, textvariable=self._to_var, width=20, bg=BG3, fg=FG,
+                 insertbackground=FG, font=("Consolas",9), relief="flat").pack(side="left",padx=2)
         tk.Label(C, text="  For Math: use 'y' for current value.  Preserve decimal places: checked below.",
                  bg=BG, fg=FG_GREY, font=("Consolas",7)).pack(anchor="w",padx=16)
 
@@ -10281,7 +10163,7 @@ class MassVarManip(tk.Frame):
                 "  • Always use Preview before Apply & Save.\n"
                 "  • Keep a backup of your XML file.\n"
                 "  • Do not include < > or & in replacement values for non-CDATA fields.\n"
-                "  • For CDATA fields (Name, Comment, FileName, etc.) special chars are fine.\n"
+                "  • For CDATA fields (n, Comment, FileName, etc.) special chars are fine.\n"
             )
             txt.insert("1.0", ref)
             txt.config(state="disabled")
@@ -10294,7 +10176,7 @@ class MassVarManip(tk.Frame):
         if _APP_SETTINGS.get("advanced_renaming_enabled", False):
             adv_f = mk_section(C, "  Advanced Name Replacement  (⚠ Advanced Renaming enabled in Settings)")
             tk.Label(adv_f,
-                     text="  Apply a rename pattern to the <Name> field using prefix/suffix or regex.\n"
+                     text="  Apply a rename pattern to the <n> (Name) field using prefix/suffix or regex.\n"
                           "  This is additive to the main operation above — use conditions to target specific rows.",
                      bg=BG, fg=FG_GREY, font=("Consolas", 8), justify="left").pack(anchor="w", padx=10, pady=4)
             adv_row = tk.Frame(adv_f, bg=BG); adv_row.pack(fill="x", padx=10, pady=4)
@@ -10318,64 +10200,23 @@ class MassVarManip(tk.Frame):
 
         # Conditions
         cond_f = mk_section(C, "  Conditions  (only apply to rows where…)  all optional")
-        self._cond_rows = []
-        self._cond_frames = []
-        self._cond_list_f = tk.Frame(cond_f, bg=BG)
-        self._cond_list_f.pack(fill="x")
-        
-        def _add_cond(is_first=False):
-            i = len(self._cond_rows)
-            r = tk.Frame(self._cond_list_f, bg=BG); r.pack(fill="x",padx=8,pady=2)
-            cen = tk.BooleanVar(value=not is_first)
-            tk.Checkbutton(r, variable=cen, bg=BG, activebackground=BG, selectcolor="#e0e0e0").pack(side="left")
+        cond_rows = []
+        for i in range(3):
+            r = tk.Frame(cond_f,bg=BG); r.pack(fill="x",padx=8,pady=2)
             tk.Label(r, text=f"Cond {i+1}:", bg=BG, fg=FG, font=("Consolas",8), width=8).pack(side="left")
-            
-            ct_var = tk.StringVar()
-            ct = ttk.Combobox(r, textvariable=ct_var, values=[], width=16, state="readonly")
-            if self._tags:
-                ct["values"] = self._tags
-                ct.set(self._tags[0])
+            ct = ttk.Combobox(r, values=[], width=16, state="readonly")
             ct.pack(side="left",padx=2)
-            
             tk.Label(r,text="value",bg=BG,fg=FG_GREY,font=("Consolas",8)).pack(side="left",padx=2)
-            
-            op_var = tk.StringVar(value="==")
-            op = ttk.Combobox(r, textvariable=op_var, values=["==","!=","contains","not contains",">","<",">=","<="],
-                              width=12, state="readonly")
-            op.pack(side="left",padx=2)
-            
-            cv_var = tk.StringVar()
-            tk.Entry(r,textvariable=cv_var,width=18,bg=BG3,fg=FG,
+            op = ttk.Combobox(r,values=["==","!=","contains","not contains",">","<",">=","<="],
+                              width=12,state="readonly"); op.set("=="); op.pack(side="left",padx=2)
+            cv = tk.StringVar()
+            tk.Entry(r,textvariable=cv,width=18,bg=BG3,fg=FG,
                      insertbackground=FG,font=("Consolas",8),relief="flat").pack(side="left",padx=2)
-                     
-            def _auto_enable(*_): cen.set(True)
-            ct.bind("<<ComboboxSelected>>", _auto_enable)
-            op.bind("<<ComboboxSelected>>", _auto_enable)
-            cv_var.trace_add("write", _auto_enable)
-            
-            def _browse_csv():
-                p = filedialog.askopenfilename(filetypes=[("CSV","*.csv"),("All","*.*")], parent=self.root)
-                if p: cv_var.set(p) # Triggers _auto_enable automatically
-                
-            mk_btn(r, "📂", _browse_csv, color=BG3, font=("Consolas",8)).pack(side="left", padx=2)
-            self._cond_rows.append((cen,ct,op,cv_var))
-            self._cond_frames.append(r)
-            
-        def _remove_cond():
-            if len(self._cond_rows) > 1:
-                self._cond_rows.pop()
-                self._cond_frames.pop().destroy()
-                
-        btn_f = tk.Frame(cond_f, bg=BG)
-        btn_f.pack(anchor="w", padx=8, pady=(4,8))
-        mk_btn(btn_f, "➕ Add Cond", _add_cond, color=BG3, font=("Consolas",8)).pack(side="left", padx=(0,4))
-        mk_btn(btn_f, "➖ Remove Cond", _remove_cond, color=BG3, font=("Consolas",8)).pack(side="left")
-        
-        # Initialize with one condition
-        _add_cond(is_first=True)
+            cond_rows.append((ct,op,cv))
+        self._cond_rows = cond_rows
 
         def _refresh_menus(*_):
-            for cen,ct,_,_ in self._cond_rows:
+            for ct,_,_ in cond_rows:
                 ct["values"] = self._tags
                 if self._tags and not ct.get(): ct.set(self._tags[0])
             if self._tags and not self._tgt_var.get(): self._tgt_menu["values"] = self._tags
@@ -10402,18 +10243,12 @@ class MassVarManip(tk.Frame):
         self._refresh_menus()
 
     def _matches_conds(self, row_text):
-        for cen, ct, op_box, cv in self._cond_rows:
-            if not cen.get(): continue
+        for ct, op_box, cv in self._cond_rows:
             tag = ct.get().strip()
             cval = cv.get().strip()
             if not tag or not cval: continue
             row_val = (_xml_tag_val(row_text, tag) or "").strip()
             op = op_box.get()
-            
-            # Smart CSV detection
-            if cval.lower().endswith(".csv") and os.path.exists(cval):
-                if op == "==" or op == "contains": op = "in CSV"
-                elif op == "!=" or op == "not contains": op = "not in CSV"
             if op == "==":
                 if row_val != cval: return False
             elif op == "!=":
@@ -10422,12 +10257,6 @@ class MassVarManip(tk.Frame):
                 if cval.lower() not in row_val.lower(): return False
             elif op == "not contains":
                 if cval.lower() in row_val.lower(): return False
-            elif op == "in CSV":
-                cache_key = (cval, tag)
-                if cache_key not in getattr(self, '_csv_cache', {}) or row_val not in self._csv_cache[cache_key]: return False
-            elif op == "not in CSV":
-                cache_key = (cval, tag)
-                if cache_key in getattr(self, '_csv_cache', {}) and row_val in self._csv_cache[cache_key]: return False
             elif op in (">","<",">=","<="):
                 try:
                     a,b = float(row_val), float(cval)
@@ -10447,8 +10276,7 @@ class MassVarManip(tk.Frame):
             m = re.search(r'[\d.]+', old_val)
             if not m: return old_val
             num = float(m.group())
-            e = frm.strip() if frm.strip() else to.strip()
-            if not e: e = "y"
+            e = frm.strip() or "y"
             if e[0] in "+-": e = "y" + e
             e = e.replace("^","**")
             try:
@@ -10463,27 +10291,16 @@ class MassVarManip(tk.Frame):
         elif op == "replace":
             return old_val.replace(frm, to)
         elif op == "regex":
-            if frm == "*":
-                frm = "^.*$"
-            try:
-                return re.sub(frm, to, old_val)
-            except re.error as e:
-                err_msg = str(e)
-                if frm.startswith("*"):
-                    err_msg += "\n\nHint: In regex, '*' means 'zero or more of the preceding character'. To match anything, use '.*' instead of '*'."
-                raise ValueError(f"Regex error: {err_msg}")
+            return re.sub(frm, to, old_val)
         elif op == "friendly":
             # Pattern helpers: contains X → .*X.*, starts → ^X, ends → X$
             pat = frm
             if pat.startswith("contains "): pat = ".*" + re.escape(pat[9:]) + ".*"
             elif pat.startswith("starts "): pat = "^" + re.escape(pat[7:])
             elif pat.startswith("ends "):   pat = re.escape(pat[5:]) + "$"
-            try:
-                return re.sub(pat, to, old_val, flags=re.IGNORECASE)
-            except re.error as e:
-                raise ValueError(f"Friendly regex error: {e}")
+            return re.sub(pat, to, old_val, flags=re.IGNORECASE)
         elif op == "set":
-            return to if (to and not frm) else frm
+            return frm
         return old_val
 
     def _run(self, preview=False):
@@ -10492,65 +10309,6 @@ class MassVarManip(tk.Frame):
         tgt = self._tgt_var.get().strip()
         if not tgt:
             messagebox.showwarning("No target","Select a target field."); return
-
-        # Pre-load CSVs for conditions
-        self._csv_cache = {}
-        import csv
-        for cen, ct, op_box, cv in self._cond_rows:
-            if not cen.get(): continue
-            op = op_box.get()
-            path = cv.get().strip()
-            tag = ct.get().strip()
-            
-            # Smart CSV detection
-            if path.lower().endswith(".csv") and os.path.exists(path):
-                if op == "==" or op == "contains": op = "in CSV"
-                elif op == "!=" or op == "not contains": op = "not in CSV"
-                
-            if op in ("in CSV", "not in CSV"):
-                cache_key = (path, tag)
-                if path and cache_key not in self._csv_cache:
-                    if not os.path.exists(path):
-                        messagebox.showerror("Error", f"CSV file not found for condition:\n{path}")
-                        return
-                    vals = set()
-                    try:
-                        with open(path, "r", encoding="utf-8-sig", errors="replace") as f:
-                            content = f.read()
-                            if '\x00' in content:  # Likely UTF-16
-                                with open(path, "rb") as bf:
-                                    content = bf.read().decode("utf-16", errors="replace")
-                            
-                            lines = content.splitlines()
-                            best_idx = 0
-                            if lines:
-                                for hl in lines:
-                                    if hl.strip():
-                                        headers = re.split(r'[;,\t]', hl)
-                                        tag_lower = tag.lower()
-                                        best_score = -1
-                                        for i, h in enumerate(headers):
-                                            h_l = h.strip().strip('"\'').lower()
-                                            if not h_l: continue
-                                            score = -1
-                                            if h_l == tag_lower: score = 100
-                                            elif h_l == "id" and "id" in tag_lower: score = 90
-                                            elif h_l in tag_lower: score = len(h_l)
-                                            if score > best_score:
-                                                best_score = score
-                                                best_idx = i
-                                        break
-                                        
-                            for line in lines:
-                                if not line.strip(): continue
-                                parts = re.split(r'[;,\t]', line)
-                                if best_idx < len(parts):
-                                    p = parts[best_idx].strip().strip('"\'')
-                                    if p: vals.add(p)
-                    except Exception as e:
-                        messagebox.showerror("Error", f"Failed to read CSV:\n{e}")
-                        return
-                    self._csv_cache[cache_key] = vals
 
         changed = []; preview_lines = []
         in_row = False; buf = []; out_parts = []
@@ -10568,14 +10326,12 @@ class MassVarManip(tk.Frame):
                 if "</ROW>" in line:
                     in_row = False
                     row_text = "".join(buf)
-                        
                     if self._matches_conds(row_text):
                         old_val = _xml_tag_val(row_text, tgt) or ""
                         try:
-                            new_val = str(self._apply_op(old_val))
+                            new_val = self._apply_op(old_val)
                         except ValueError as e:
                             messagebox.showerror("Error", str(e)); return
-                            
                         if new_val != old_val:
                             row_text = re.sub(
                                 rf"(<{re.escape(tgt)}>)(.*?)(</{re.escape(tgt)}>)",
@@ -11006,1306 +10762,6 @@ class FixItemParam(tk.Frame):
         self._log(f"\nDone: {changed}/{len(self._paths)} files updated.")
 
 
-
-# ── Shared helpers for XML header generation (XMLBulkUpdater + ToolboxSwapper) ──
-
-# Known TableInfoID values per table name (normalised lowercase key)
-_TABLE_INFO_IDS = {
-    "cmsetitemparam":       ("'", "7018"),
-    "compound_potion":      ("'", "388"),
-    "compounder_spot":      ("'", "438"),
-    "exchangeshopcontents": ("'", "4547"),
-    "exchange_location":    ("'", "550"),
-    "r_shopitem":           ("'", "94"),
-    "recycleexceptitem":    ("'", "6966"),
-    "itemparam2":           ("'", "1602"),   # default; ItemParamCM2 variant handled separately
-    "itemparamcm2":         ('"', "1751"),
-    "presentitemparam2":    ('"', "1884"),
-}
-
-# Tables that use double-quotes for TABLE-level attributes (name, RowCount, FieldCnt)
-# but single-quotes for FIELDINFO attributes
-_DOUBLE_QUOTE_TABLES = {"itemparamcm2", "presentitemparam2"}
-
-def _detect_attr_quote(text):
-    """Detect whether the TABLE line uses single or double quotes for its attributes.
-    Returns '"' or "'" based on what the TABLE name= line actually uses.
-    Falls back to "'" (most common in TO files)."""
-    m = re.search(r'<TABLE\s+name\s*=\s*(["\'])', text, re.IGNORECASE)
-    return m.group(1) if m else "'"
-
-def _lookup_table_info(table_name):
-    """Return (attr_quote, tableinfo_id_str, needs_warning) for a given table name.
-    needs_warning=True when the ID could not be determined automatically.
-    """
-    key = re.sub(r'\.xml$', '', table_name.strip(), flags=re.IGNORECASE).lower()
-    if key in _TABLE_INFO_IDS:
-        q, tid = _TABLE_INFO_IDS[key]
-        return q, tid, False
-    # Unknown table
-    return "'", "0", True
-
-def _update_fieldcnt(text):
-    """Update FieldCnt attribute to match the actual number of <FIELDINFO lines."""
-    count = len(re.findall(r'<FIELDINFO\b', text, re.IGNORECASE))
-    if count == 0:
-        return text
-    pat = re.compile(r"(FieldCnt\s*=\s*[\"'])(\d+)([\"'])", re.IGNORECASE)
-    return pat.sub(lambda m: m.group(1) + str(count) + m.group(3), text, count=1)
-
-def _tableinfoid_warning_msg(table_name):
-    """Return a warning message string for TableInfoID needing manual correction."""
-    key = re.sub(r'\.xml$', '', table_name.strip(), flags=re.IGNORECASE).lower()
-    if key == "itemparam2":
-        return (
-            "⚠  TableInfoID needs to be set manually:\n\n"
-            "  • Default itemparam2.xml  →  TableInfoID='1602'\n"
-            "  • If named ItemParamCM2  →  TableInfoID=\"1751\"\n\n"
-            "Open the output XML and set the correct value before use."
-        )
-    _, tid, needs_warn = _lookup_table_info(table_name)
-    if needs_warn:
-        return (
-            f"⚠  TableInfoID for '{table_name}' is not in the known list.\n\n"
-            "Please set it manually before importing this file."
-        )
-    return (
-        f"⚠  TableInfoID has been set to '{tid}' for {table_name}.\n"
-        "Please verify this is correct before importing."
-    )
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# XML BULK UPDATER
-# Merges raw-ROW patch files into a full structured XML table. Preserves the
-# source file's exact formatting — no added indents, no XML declaration added.
-# ══════════════════════════════════════════════════════════════════════════════
-
-class XMLBulkUpdater(tk.Frame):
-    ACC = ACC18
-    MAX_PATCHES = 10
-
-    def __init__(self, parent, root, session):
-        super().__init__(parent, bg=BG)
-        self.root = root; self.session = session
-        self._table_path  = None
-        self._patch_paths = []
-        self._table_name  = ""
-        self._build()
-
-    def _clear(self): [w.destroy() for w in self.winfo_children()]
-
-    def _build(self):
-        self._clear()
-        tk.Label(self, text="XML BULK UPDATER",
-                 font=("Consolas",16,"bold"), bg=BG, fg=self.ACC).pack(pady=(20,2))
-        tk.Label(self,
-                 text="Merge one or more raw-ROW patch files into a full XML table.\n"
-                      "Rows with matching IDs are replaced; new IDs are appended.\n"
-                      "Output filename = the TABLE name attribute. Source formatting preserved exactly.",
-                 bg=BG, fg=FG_DIM, font=("Consolas",8), justify="center").pack(pady=(0,10))
-
-        s1 = mk_section(self, "  Step 1 — Base XML Table  (must have TABLE name= and FIELDINFO headers)")
-        self._tbl_status = tk.StringVar(value="No file loaded")
-        r1 = tk.Frame(s1, bg=BG); r1.pack(fill="x", padx=8, pady=6)
-        tk.Label(r1, textvariable=self._tbl_status, bg=BG, fg=FG_GREY,
-                 font=("Consolas",9)).pack(side="left", fill="x", expand=True)
-        mk_btn(r1, "📂  Load Table XML", self._load_table,
-               color=self.ACC, fg=BG2).pack(side="right", padx=4)
-
-        s2 = mk_section(self, f"  Step 2 — Patch Files  (raw ROW output from this toolbox, up to {self.MAX_PATCHES})")
-        ph = tk.Frame(s2, bg=BG); ph.pack(fill="x", padx=8, pady=(4,2))
-        self._patch_status = tk.StringVar(value="No patch files loaded")
-        tk.Label(ph, textvariable=self._patch_status, bg=BG, fg=FG_GREY,
-                 font=("Consolas",9)).pack(side="left")
-        pb = tk.Frame(s2, bg=BG); pb.pack(anchor="w", padx=8, pady=(0,4))
-        mk_btn(pb, "📂  Add Patch File(s)", self._add_patches, color=BG3).pack(side="left", padx=(0,4))
-        mk_btn(pb, "🗑  Clear Patches",     self._clear_patches, color=BG4).pack(side="left")
-        lf = tk.Frame(s2, bg=BG, height=80); lf.pack(fill="x", padx=8, pady=(0,6))
-        lf.pack_propagate(False)
-        self._patch_lb = tk.Listbox(lf, bg=BG2, fg=FG, font=("Consolas",8),
-                                    selectbackground=BG3, relief="flat", bd=0)
-        lb_sb = tk.Scrollbar(lf, orient="vertical", command=self._patch_lb.yview)
-        self._patch_lb.configure(yscrollcommand=lb_sb.set)
-        lb_sb.pack(side="right", fill="y"); self._patch_lb.pack(fill="both", expand=True)
-
-        s3 = mk_section(self, "  Step 3 — Merge Mode")
-        self._mode_var = tk.StringVar(value="replace_append")
-        for lbl, val in [
-            ("Replace matching IDs + append new ones  (recommended)", "replace_append"),
-            ("Append only  (never overwrite existing rows)",           "append_only"),
-            ("Replace only  (skip IDs not already present)",           "replace_only"),
-        ]:
-            tk.Radiobutton(s3, text=lbl, variable=self._mode_var, value=val,
-                           bg=BG, fg=FG, selectcolor=BG3, activebackground=BG,
-                           font=("Consolas",9)).pack(anchor="w", padx=10, pady=2)
-        tk.Label(s3, text="  ID matched on the first <FIELDINFO IsKey='1'> field, or <Id> if none found.",
-                 bg=BG, fg=FG_GREY, font=("Consolas",7)).pack(anchor="w", padx=10, pady=(0,4))
-
-        nav = tk.Frame(self, bg=BG); nav.pack(pady=8)
-        mk_btn(nav, "⚡  Build & Export", self._run,
-               color=self.ACC, fg=BG2, font=("Consolas",11,"bold")).pack(side="left", padx=8)
-        self._log_txt = scrolledtext.ScrolledText(self, font=("Consolas",8), bg=BG2, fg=FG, height=8)
-        self._log_txt.pack(fill="both", expand=True, padx=10, pady=6)
-        self._log_txt.config(state="disabled")
-
-    def _log(self, msg):
-        self._log_txt.config(state="normal")
-        self._log_txt.insert("end", msg + "\n")
-        self._log_txt.see("end"); self._log_txt.config(state="disabled")
-        self.update_idletasks()
-
-    def _load_table(self):
-        p = filedialog.askopenfilename(
-            title="Load Base XML Table",
-            filetypes=[("XML","*.xml"),("All","*.*")], parent=self.root)
-        if not p: return
-        try:
-            with open(p, encoding="utf-8", errors="replace") as f:
-                head = f.read(8192)
-        except Exception as e:
-            messagebox.showerror("Error", f"Cannot read file:\n{e}", parent=self.root); return
-        if not re.search(r'<TABLE\s+name\s*=', head, re.IGNORECASE):
-            messagebox.showerror("Invalid File",
-                "This file is not a full XML table.\n\n"
-                "It must contain a <TABLE name='...'> header with FIELDINFO rows.\n\n"
-                "If this is a raw-ROW output file from the toolbox, load a proper "
-                "source XML table instead.", parent=self.root); return
-        self._table_path = p
-        m = re.search(r"<TABLE\s+name\s*=\s*[\"']([^\"']+)[\"']", head, re.IGNORECASE)
-        self._table_name = m.group(1) if m else os.path.splitext(os.path.basename(p))[0]
-        row_count = _count_rows_in_file(p)
-        self._tbl_status.set(f"✓  {self._table_name}  ({row_count:,} existing rows)  ←  {os.path.basename(p)}")
-
-    def _add_patches(self):
-        remaining = self.MAX_PATCHES - len(self._patch_paths)
-        if remaining <= 0:
-            messagebox.showwarning("Limit reached",
-                f"Maximum {self.MAX_PATCHES} patch files allowed. Clear some first.",
-                parent=self.root); return
-        paths = filedialog.askopenfilenames(
-            title=f"Add Patch File(s)  ({remaining} slots remaining)",
-            filetypes=[("XML","*.xml"),("All","*.*")], parent=self.root)
-        if not paths: return
-        for p in paths:
-            if len(self._patch_paths) >= self.MAX_PATCHES: break
-            if p not in self._patch_paths:
-                self._patch_paths.append(p)
-                self._patch_lb.insert("end", os.path.basename(p))
-        self._patch_status.set(f"{len(self._patch_paths)} patch file(s) loaded")
-
-    def _clear_patches(self):
-        self._patch_paths = []; self._patch_lb.delete(0, "end")
-        self._patch_status.set("No patch files loaded")
-
-    def _get_key_field(self, table_text):
-        m = re.search(r"<FIELDINFO\s+Name\s*=\s*[\"']([^\"']+)[\"']\s+IsKey\s*=\s*[\"']1[\"']",
-                      table_text, re.IGNORECASE)
-        if m: return m.group(1)
-        m2 = re.search(r"<FIELDINFO\s+Name\s*=\s*[\"']([^\"']+)[\"']", table_text, re.IGNORECASE)
-        return m2.group(1) if m2 else "Id"
-
-    def _run(self):
-        if not self._table_path:
-            messagebox.showwarning("Missing", "Load a base XML table first.", parent=self.root); return
-        if not self._patch_paths:
-            messagebox.showwarning("Missing", "Add at least one patch file.", parent=self.root); return
-        self._log_txt.config(state="normal"); self._log_txt.delete("1.0","end")
-        self._log_txt.config(state="disabled")
-        self._log(f"Base table : {os.path.basename(self._table_path)}")
-        self._log(f"Table name : {self._table_name}")
-        self._log(f"Mode       : {self._mode_var.get()}\n")
-
-        base_text = open(self._table_path, encoding="utf-8", errors="replace").read()
-        key_field = self._get_key_field(base_text)
-        self._log(f"Key field  : {key_field}")
-
-        # Index existing rows by key value, preserve order
-        existing_order = []
-        existing_map   = {}
-        buf = []; in_row = False
-        for line in base_text.splitlines(keepends=True):
-            if not in_row:
-                if "<ROW>" in line: in_row = True; buf = [line]
-            else:
-                buf.append(line)
-                if "</ROW>" in line:
-                    in_row = False
-                    row_txt = "".join(buf)
-                    kv = _xml_tag_val(row_txt, key_field) or ""
-                    existing_order.append(kv)
-                    existing_map[kv] = row_txt
-
-        # Collect patch rows
-        patch_rows = []
-        for pp in self._patch_paths:
-            rows = list(_iter_xml_rows(pp))
-            self._log(f"  Patch {os.path.basename(pp)}: {len(rows)} row(s)")
-            patch_rows.extend(rows)
-
-        mode = self._mode_var.get()
-        replaced = 0; appended = 0; skipped = 0
-        new_rows_to_add = []
-        for row_txt in patch_rows:
-            kv = _xml_tag_val(row_txt, key_field) or ""
-            if kv in existing_map:
-                if mode in ("replace_append", "replace_only"):
-                    existing_map[kv] = row_txt; replaced += 1
-                else:
-                    skipped += 1
-            else:
-                if mode in ("replace_append", "append_only"):
-                    new_rows_to_add.append((kv, row_txt)); appended += 1
-                else:
-                    skipped += 1
-
-        self._log(f"\nReplaced: {replaced}  Appended: {appended}  Skipped: {skipped}")
-
-        # Rebuild output — walk base text verbatim, swap rows in-place
-        out_lines = []
-        buf = []; in_row = False
-        for line in base_text.splitlines(keepends=True):
-            if not in_row:
-                if "<ROW>" in line: in_row = True; buf = [line]
-                else: out_lines.append(line)
-            else:
-                buf.append(line)
-                if "</ROW>" in line:
-                    in_row = False
-                    row_txt = "".join(buf)
-                    kv = _xml_tag_val(row_txt, key_field) or ""
-                    out_lines.append(existing_map.get(kv, row_txt))
-
-        # Append new rows just before </Table>
-        if new_rows_to_add:
-            close_idx = None
-            for i in range(len(out_lines)-1, -1, -1):
-                if re.search(r'</Table>', out_lines[i], re.IGNORECASE):
-                    close_idx = i; break
-            insert_lines = []
-            for kv, row_txt in new_rows_to_add:
-                insert_lines.extend(row_txt.splitlines(keepends=True))
-            if close_idx is not None:
-                out_lines[close_idx:close_idx] = insert_lines
-            else:
-                out_lines.extend(insert_lines)
-
-        out_text = "".join(out_lines)
-
-        # Update RowCount — preserves the source file's quote character (' or ")
-        total_rows = out_text.count("<ROW>")
-        rc_pat = re.compile(r"(RowCount\s*=\s*[\"'])(\d+)([\"'])", re.IGNORECASE)
-        out_text = rc_pat.sub(lambda m: m.group(1) + str(total_rows) + m.group(3), out_text, count=1)
-
-        # Update FieldCnt to match actual FIELDINFO count, preserving quote char
-        out_text = _update_fieldcnt(out_text)
-
-        self._log(f"Total rows in output: {total_rows}")
-
-        out_fname = self._table_name + ".xml"
-        default_dir = _APP_SETTINGS.get("libconfig_dir", os.path.join(os.getcwd(), "libconfig"))
-        if _bypass_dialogs():
-            out_path = os.path.join(default_dir, out_fname)
-            os.makedirs(default_dir, exist_ok=True)
-        else:
-            out_path = filedialog.asksaveasfilename(
-                title="Save Updated Table XML",
-                initialdir=default_dir, initialfile=out_fname,
-                defaultextension=".xml",
-                filetypes=[("XML","*.xml"),("All","*.*")], parent=self.root)
-        if not out_path: return
-        with open(out_path, "w", encoding="utf-8") as f:
-            f.write(out_text)
-        self._log(f"\n✓  Saved: {out_path}")
-        messagebox.showinfo("Done",
-            f"Updated XML saved:\n{out_path}\n\n"
-            f"Replaced: {replaced}  Appended: {appended}  Skipped: {skipped}\n"
-            f"Total rows: {total_rows}", parent=self.root)
-
-# ══════════════════════════════════════════════════════════════════════════════
-# TOOLBOX SWAPPER
-# Converts a full XML table → CSV, or CSV → XML table. Warns on raw-ROW files.
-# ══════════════════════════════════════════════════════════════════════════════
-
-
-
-#  ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ?
-# TOOL 19 - MyShop Lib & DB Generator
-#  ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ?
-
-
-class MyShopTool(tk.Frame):
-    ACC = "#ff9e99"
-
-    MAIN_CATS = ["1 - MyShop", "1 - MyCamp (Set/Space)", "2 - MyCamp (Furniture/Special)"]
-
-    MS_CAT0 = ["11 - Special", "12 - Equipment", "13 - Enhance", "14 - Use", "15 - Fashion", "16 - Utility"]
-    MC_CAT0 = ["0 - None", "1 - Space", "2 - BG", "3 - Furniture", "4 - Furniture/Props", "5 - Special", "6 - None"]
-
-    MS_CAT1 = {
-        "11": ["101 - New Item", "102 - Recommended", "103 - Equipment Set", "104 - Special Set", "113 - Special Box"],
-        "12": ["105 - Head", "106 - Mask", "107 - Accessory", "108 - Cape", "109 - Weapon", "110 - Hat", "111 - Shield"],
-        "13": ["114 - Pet", "115 - Drill", "116 - Pet Reinforce", "117 - Guardian", "118 - RuneStone"],
-        "14": ["120 - Modifiers", "121 - Reset Items", "123 - Scroll", "124 - Special", "125 - Hair Dye", "126 - Potions", "127 - Compound Items"],
-        "15": ["128 - Bunny/Paula", "129 - Buffalo", "130 - Sheep", "131 - Dragon", "132 - Fox", "133 - Lion", "134 - Cat", "135 - Raccoon"],
-        "16": ["136 - Utility (if applicable)"]
-    }
-    MC_CAT1 = {
-        "0": ["0 - Sort? (Set)"],
-        "1": ["1 - Floor/Wall", "2 - Partition"], # Space
-        "2": ["0 - Camp", "1 - Camp", "3 - Skin", "4 - WP", "5 - Floor", "6 - Window", "7 - Door"], # BG
-        "3": ["1 - Bed", "2 - Rack", "3 - Table/Chair", "4 - Chair", "5 - Furnishing", "6 - Kit/Bath"], # Fur
-        "4": ["1 - S-Electrns", "2 - Wall Deco", "3 - Floor Deco", "4 - Carpet"], # Props
-        "5": ["1 - Functional Furniture"], # Special
-        "6": ["0 - None"]
-    }
-    MC_CAT2 = ["0 - None", "2 - Stripe WP"]
-
-    def __init__(self, parent, root, session):
-        super().__init__(parent, bg=BG)
-        self.root = root
-        self.session = session
-        self._mode = "raw"
-        self._listings = []
-        self._current_idx = 0
-        self._cat0_cb = None
-        self._cat1_cb = None
-        self._cat2_cb = None
-        self._build_screen()
-
-    def _clear(self):
-        for w in self.winfo_children(): w.destroy()
-
-    def _build_screen(self):
-        self._clear()
-        hdr = tk.Frame(self, bg=BG); hdr.pack(fill="x", pady=(10,5))
-        tk.Label(hdr, text="MYSHOP LIB & DB GENERATOR",
-                 font=("Consolas", 15, "bold"), bg=BG, fg=self.ACC).pack()
-        tk.Label(hdr, text="NOTE: Currently for Polar files only; will not work with Season 2 files as of right now.",
-                 bg=BG, fg=ACC3, font=("Consolas", 9, "bold")).pack(pady=2)
-
-        nav = tk.Frame(self, bg=BG); nav.pack(fill="x", padx=10, pady=5)
-        for label, val in [("Set/Listing Maker", "raw"), ("XML to SQL Mode", "xml")]:
-            tk.Radiobutton(nav, text=label, variable=tk.StringVar(value=self._mode), value=val,
-                           command=lambda m=val: setattr(self, "_mode", m) or self._build_screen(),
-                           bg=BG, fg=FG, selectcolor=BG3, font=("Consolas", 10)).pack(side="left", padx=10)
-
-        if self._mode == "raw":
-            self._build_raw_mode()
-        else:
-            self._build_xml_mode()
-
-    def _build_xml_mode(self):
-        body = tk.Frame(self, bg=BG); body.pack(fill="both", expand=True, padx=20, pady=10)
-        sf = mk_section(body, "  Paste libcmgds_e XML (GOODS blocks)  ")
-        txt = tk.Text(sf, height=20, bg=BG2, fg=FG, font=("Consolas", 9))
-        txt.pack(fill="both", expand=True, padx=8, pady=8)
-
-        def _generate():
-            xml_text = txt.get("1.0", "end")
-            blocks = re.findall(r'<GOODS\s+(.*?)(?:/\s*>|>(.*?)</GOODS>)', xml_text, re.DOTALL | re.IGNORECASE)
-            if not blocks: return messagebox.showerror("Error", "No <GOODS> tags found.")
-            sql_goods, sql_list, sql_limit = [], [], []
-            today = datetime.date.today().strftime("%Y-%m-%d")
-
-            for attrs_str, inner in blocks:
-                attr_dict = {m.group(1).lower(): m.group(2) for m in re.finditer(r'([a-zA-Z0-9_]+)\s*=\s*"([^"]*)"', attrs_str)}
-                box_id = attr_dict.get("goods_code", "0")
-                box_name = attr_dict.get("goods_name", "Unknown")
-                box_desc = attr_dict.get("goods_desc", "")
-                cat0 = attr_dict.get("goods_category0", "11")
-                cat1 = attr_dict.get("goods_category1", "101")
-                cat2 = attr_dict.get("goods_category2", "0")
-                limit_use = attr_dict.get("goods_limit_use", "0")
-                limit_time = attr_dict.get("goods_limit_time", "0")
-                price = attr_dict.get("goods_cash_price", "0")
-                nw = attr_dict.get("goods_shop_new", "0")
-                pop = attr_dict.get("goods_shop_popular", "0")
-                lvl = attr_dict.get("goods_char_level", "0")
-                issell = attr_dict.get("goods_issell", "1")
-                created = attr_dict.get("goods_created", today.replace("-","")[:8])
-
-                sub_items = []
-                for mm in re.finditer(r'<GOODS_LIST\s+(.*?)/\s*>', inner or attrs_str, re.IGNORECASE):
-                    sub_items.append({m.group(1).lower(): m.group(2) for m in re.finditer(r'([a-zA-Z0-9_]+)\s*=\s*"([^"]*)"', mm.group(1))})
-                
-                if not sub_items:
-                    sub_items.append({
-                        "item_index": box_id,
-                        "goods_name": box_name,
-                        "item_count": "1",
-                        "item_class": "1",
-                        "goods_list_code": attr_dict.get("goods_list_code", box_id),
-                        "parents_list_code": attr_dict.get("parents_list_code", box_id)
-                    })
-
-                version_code = sub_items[0].get("goods_list_code", "0")
-                sql_cat2 = "2" if cat1 == "113" else "0"
-
-                sql_goods.append(
-                    f"INSERT INTO gmg_account.dbo.tbl_goods ("
-                    f"goods_code, goods_name, goods_desc, goods_capacity, goods_category, "
-                    f"goods_set_count, goods_item_index, goods_item_count, "
-                    f"goods_limit_use, goods_limit_time, goods_cash_price, goods_created, "
-                    f"goods_shop_new, goods_shop_popular, goods_sellcount, "
-                    f"goods_category0, goods_category1, goods_category2, "
-                    f"goods_limit_desc, goods_char_level, goods_char_sex, goods_char_type, "
-                    f"version_code, goods_issell, goods_image"
-                    f") VALUES ("
-                    f"{box_id}, N'{box_name.replace(chr(39),chr(39)+chr(39))}', N'{box_desc.replace(chr(39),chr(39)+chr(39))}', NULL, 0, "
-                    f"{len(sub_items)}, NULL, NULL, "
-                    f"{limit_use}, {limit_time}, {price}, '{created} 00:00:00', "
-                    f"{nw}, {pop}, 0, "
-                    f"{attr_dict.get('goods_category','1')}, {cat1}, {sql_cat2}, "
-                    f"N'All Characters', {lvl}, 0, 15, "
-                    f"{version_code}, {issell}, ''"
-                    f");"
-                )
-
-                sql_limit.append(
-                    f"INSERT INTO gmg_account.dbo.tbl_goods_limit ("
-                    f"goods_code, limit_code, goods_limit_price, default_display"
-                    f") VALUES ("
-                    f"{box_id}, {limit_use}, {price}, 1"
-                    f");"
-                )
-
-                for item in sub_items:
-                    sql_list.append(
-                        f"INSERT INTO gmg_account.dbo.tbl_goods_list ("
-                        f"goods_code, item_index, item_count, goods_scode, item_class, "
-                        f"preview_x, preview_y, preview_z, preview_d, "
-                        f"goods_list_code, parents_list_code, goods_list_limit"
-                        f") VALUES ("
-                        f"{item.get('item_index','0')}, {item.get('item_index','0')}, {item.get('item_count','1')}, {item.get('item_index','0')}, {item.get('item_class','1')}, "
-                        f"'{item.get('preview_x','')}', '{item.get('preview_y','')}', '{item.get('preview_z','')}', '{item.get('preview_d','')}', "
-                        f"{item.get('goods_list_code','0')}, {item.get('parents_list_code','0')}, NULL"
-                        f");"
-                    )
-
-            full_sql = "-- tbl_goods\n" + "\n".join(sql_goods) + "\n\n-- tbl_goods_list\n" + "\n".join(sql_list) + "\n\n-- tbl_goods_limit\n" + "\n".join(sql_limit)
-            _show_text_window("Generated SQL", full_sql, self.root)
-
-        mk_btn(sf, "s  Generate SQL statements", _generate, color=GREEN, fg=BG2).pack(pady=10)
-
-    def _build_raw_mode(self):
-        body = tk.Frame(self, bg=BG); body.pack(fill="both", expand=True)
-        scroll_host = tk.Frame(body, bg=BG); scroll_host.pack(fill="both", expand=True, padx=4)
-        c, f = mk_scroll_canvas(scroll_host)
-
-        if not self._listings:
-            s = self.session.myshop_raw_prefs or {}
-            self._listings.append({
-                "goods_code": str(s.get("goods_code", "")),
-                "goods_name": "",
-                "goods_desc": s.get("goods_desc", ""),
-                "goods_cash_price": s.get("goods_cash_price", "0"),
-                "goods_limit_use": s.get("goods_limit_use", "0 - Boxes/Untimed"),
-                "goods_limit_time": s.get("goods_limit_time", "0"),
-                "goods_category": s.get("goods_category", "1 - MyShop"),
-                "goods_category0": s.get("goods_category0", "11 - Special"),
-                "goods_category1": s.get("goods_category1", "101 - New Item"),
-                "goods_category2": s.get("goods_category2", "0 - None"),
-                "goods_limit_desc": s.get("goods_limit_desc", "All Characters"),
-                "goods_char_level": s.get("goods_char_level", "0"),
-                "goods_char_sex": s.get("goods_char_sex", "0"),
-                "goods_char_type": s.get("goods_char_type", "15"),
-                "goods_shop_new": s.get("goods_shop_new", 0),
-                "goods_shop_popular": s.get("goods_shop_popular", 0),
-                "goods_issell": s.get("goods_issell", 1),
-                "goods_filtercode1": s.get("goods_filtercode1", "0"),
-                "goods_filtercode2": s.get("goods_filtercode2", "0"),
-                "goods_filtercode3": s.get("goods_filtercode3", "0"),
-                "goods_filtercode4": s.get("goods_filtercode4", "0"),
-                "goods_filterlevel": s.get("goods_filterlevel", "0"),
-                "discount_price": s.get("discount_price", "0"),
-                "discount_start_date": s.get("discount_start_date", "1900-01-01 00:00:00"),
-                "discount_end_date": s.get("discount_end_date", "1900-01-01 00:00:00"),
-                "discount_display_date": s.get("discount_display_date", ""),
-                "strict_code": s.get("strict_code", 1),
-                "items": [{
-                    "item_index": "",
-                    "goods_name": "",
-                    "item_count": "1",
-                    "item_class": "1",
-                    "goods_list_code": str(s.get("goods_list_code", "")),
-                    "parents_list_code": str(s.get("parents_list_code", "")),
-                    "pv_x": "", "pv_y": "", "pv_z": "", "pv_d": ""
-                }]
-            })
-            self._current_idx = 0
-
-        idx = self._current_idx
-        listing = self._listings[idx]
-
-        nav = tk.Frame(f, bg=BG); nav.pack(fill="x", pady=(5,10))
-        if idx > 0: mk_btn(nav, "-? Prev Listing", lambda: self._go(idx-1)).pack(side="left")
-        tk.Label(nav, text=f" Listing {idx+1} / {len(self._listings)} ", bg=BG, fg=FG, font=("Consolas", 12, "bold")).pack(side="left", padx=15)
-        mk_btn(nav, "Next Listing - ", lambda: self._go(idx+1)).pack(side="left")
-
-        sec1 = mk_section(f, "  GOODS (Parent Listing Settings)  ")
-        
-        def _add_entry(parent, label, key, width, dictionary, tip=""):
-            row = tk.Frame(parent, bg=BG); row.pack(fill="x", padx=4, pady=2)
-            tk.Label(row, text=label, width=16, anchor="w", bg=BG, fg=FG, font=("Consolas", 9)).pack(side="left")
-            v = tk.StringVar(value=str(dictionary.get(key,"")))
-            e = tk.Entry(row, textvariable=v, width=width, bg=BG3, fg=FG, insertbackground=FG, font=("Consolas", 9))
-            e.pack(side="left")
-            v.trace_add("write", lambda *_: dictionary.update({key: v.get()}))
-            if tip: _attach_tooltip(e, tip)
-            return row, v, e
-
-        def _add_drop(parent, label, key, width, options, dictionary):
-            row = tk.Frame(parent, bg=BG); row.pack(fill="x", padx=4, pady=2)
-            tk.Label(row, text=label, width=16, anchor="w", bg=BG, fg=FG, font=("Consolas", 9)).pack(side="left")
-            v = tk.StringVar(value=str(dictionary.get(key,"")))
-            cb = ttk.Combobox(row, textvariable=v, values=options, state="readonly", width=width, font=("Consolas", 9))
-            cb.pack(side="left")
-            def _cb_saved(*_):
-                dictionary.update({key: v.get()})
-                self.session.myshop_raw_prefs.update({key:v.get()})
-                self._cb_refresh(key)
-            v.trace_add("write", _cb_saved)
-            return row, v, cb
-
-        r1 = tk.Frame(sec1, bg=BG); r1.pack(fill="x", pady=2)
-        _, gc_v, _ = _add_entry(r1, "Goods Code (ID):", "goods_code", 14, listing, "The unique listing ID (goods_code). Used in Parent/Shop queries.")
-        strict_v = tk.IntVar(value=listing.get("strict_code", 1))
-        def _on_strict_toggle():
-            listing["strict_code"] = strict_v.get()
-            if strict_v.get() and len(listing["items"]) == 1:
-                listing["items"][0]["item_index"] = gc_v.get()
-                listing["items"][0]["goods_list_code"] = gc_v.get()
-                listing["items"][0]["parents_list_code"] = gc_v.get()
-                self._build_screen()
-        tk.Checkbutton(r1, text="Strict Link Codes (Auto-sync Item index&code to Goods code)", variable=strict_v, command=_on_strict_toggle, bg=BG, fg=ACC4, selectcolor=BG3, font=("Consolas", 8)).pack(side="left", padx=10)
-
-        def _sync_strict(*_):
-            if strict_v.get() and len(listing["items"]) == 1:
-                listing["items"][0]["item_index"] = gc_v.get()
-                listing["items"][0]["goods_list_code"] = gc_v.get()
-                listing["items"][0]["parents_list_code"] = gc_v.get()
-        gc_v.trace_add("write", _sync_strict)
-
-        _add_entry(sec1, "Name:", "goods_name", 40, listing)
-        _add_entry(sec1, "Description:", "goods_desc", 50, listing)
-        
-        r2 = tk.Frame(sec1, bg=BG); r2.pack(fill="x", pady=2)
-        _, pv, _ = _add_entry(r2, "Price (NCash):", "goods_cash_price", 10, listing)
-
-        def _add_chk(parent, label, key, dictionary):
-            v = tk.IntVar(value=dictionary.get(key, 0))
-            chk = tk.Checkbutton(parent, text=label, variable=v, bg=BG, fg=FG, selectcolor=BG3, activebackground=BG, font=("Consolas", 9), command=lambda: dictionary.update({key: v.get()}))
-            chk.pack(side="left", padx=6)
-            return v
-
-        _add_chk(r2, "Listed (issell)", "goods_issell", listing)
-        _add_chk(r2, "New Stamp", "goods_shop_new", listing)
-        _add_chk(r2, "Popular Stamp", "goods_shop_popular", listing)
-
-        cat_frm = tk.Frame(sec1, bg=BG); cat_frm.pack(fill="x", pady=5)
-        if self.session.myshop_raw_prefs.get("manual_dropdowns", 0):
-            _, cat_m_v, cat_m_cb = _add_entry(cat_frm, "Main Category:", "goods_category", 26, listing)
-            _, cat0_v, self._cat0_cb = _add_entry(cat_frm, "Category 0:", "goods_category0", 22, listing)
-            _, cat1_v, self._cat1_cb = _add_entry(cat_frm, "Category 1:", "goods_category1", 22, listing)
-            _, cat2_v, self._cat2_cb = _add_entry(cat_frm, "Category 2:", "goods_category2", 16, listing)
-        else:
-            _, cat_m_v, cat_m_cb = _add_drop(cat_frm, "Main Category:", "goods_category", 26, self.MAIN_CATS, listing)
-            _, cat0_v, self._cat0_cb = _add_drop(cat_frm, "Category 0:", "goods_category0", 22, [], listing)
-            _, cat1_v, self._cat1_cb = _add_drop(cat_frm, "Category 1:", "goods_category1", 22, [], listing)
-            _, cat2_v, self._cat2_cb = _add_drop(cat_frm, "Category 2:", "goods_category2", 16, self.MC_CAT2, listing)
-
-        lu_frm = tk.Frame(sec1, bg=BG); lu_frm.pack(fill="x", pady=2)
-        if self.session.myshop_raw_prefs.get("manual_dropdowns", 0):
-            _, lu_v, _ = _add_entry(lu_frm, "Limit Use:", "goods_limit_use", 22, listing)
-            self._limit_use_v = lu_v
-        else:
-            _, lu_v, _ = _add_drop(lu_frm, "Limit Use:", "goods_limit_use", 22, ["0 - Boxes/Untimed", "1 - Timed Items", "2 - Fashion/Bulk Purchase"], listing)
-            self._limit_use_v = lu_v
-        self.lt_frm = tk.Frame(lu_frm, bg=BG)
-        _, lt_v, _ = _add_entry(self.lt_frm, "Limit Hrs:", "goods_limit_time", 8, listing)
-        
-        ext_f = tk.Frame(sec1, bg=BG); ext_f.pack(fill="x", pady=6)
-        sh_disc = tk.IntVar(value=listing.get("sh_disc", 0))
-        sh_char = tk.IntVar(value=listing.get("sh_char", 0))
-        sh_filt = tk.IntVar(value=listing.get("sh_filt", 0))
-        sh_prev = tk.IntVar(value=listing.get("sh_prev", 0))
-        
-        for v, t_txt, key in [(sh_disc, "Discount", "sh_disc"), (sh_char, "Character Limits", "sh_char"), (sh_filt, "Filter Codes", "sh_filt"), (sh_prev, "Preview Flags", "sh_prev")]:
-            tk.Checkbutton(ext_f, text=f"Show {t_txt}", variable=v, bg=BG, fg=FG_DIM, selectcolor=BG3, command=lambda _key=key, _v=v: listing.update({_key: _v.get()}) or self._build_screen()).pack(side="left", padx=5)
-
-        if sh_disc.get():
-            df = tk.Frame(sec1, bg=BG3); df.pack(fill="x", padx=10, pady=2)
-            tk.Label(df, text="Discount Config", bg=BG3, fg=ACC4).pack(anchor="w")
-            _add_entry(df, "Discount Price:", "discount_price", 10, listing)
-            _add_entry(df, "Start Date:", "discount_start_date", 20, listing)
-            _add_entry(df, "End Date:", "discount_end_date", 20, listing)
-            _add_entry(df, "Displ. Date:", "discount_display_date", 20, listing)
-        
-        if sh_char.get():
-            cf = tk.Frame(sec1, bg=BG3); cf.pack(fill="x", padx=10, pady=2)
-            tk.Label(cf, text="Character Limits", bg=BG3, fg=ACC4).pack(anchor="w")
-            _add_entry(cf, "Limit Desc:", "goods_limit_desc", 25, listing)
-            _add_entry(cf, "Min Level:", "goods_char_level", 8, listing)
-            if self.session.myshop_raw_prefs.get("manual_dropdowns", 0):
-                _add_entry(cf, "Char Sex:", "goods_char_sex", 8, listing, "0=All, 1=Male, 2=Female")
-                _add_entry(cf, "Char Type:", "goods_char_type", 8, listing, "15=All, etc")
-            else:
-                _add_drop(cf, "Char Sex:", "goods_char_sex", 20, [
-                    "0 - No Restriction", 
-                    "1 - Males Only", 
-                    "2 - Females Only"
-                ], listing)
-                _add_drop(cf, "Char Type:", "goods_char_type", 36, [
-                    "0 - Universal",
-                    "1 - Raccoon/Cat/Bunny/Buffalo",
-                    "2 - Lion/Fox/Sheep/Dragon",
-                    "4 - Lion/Fox/Sheep/Dragon (Alternate)",
-                    "8 - Raccoon/Cat/Bunny/Buffalo (Alternate)",
-                    "9 - Paula",
-                    "14 - Rare Coplin",
-                    "15 - Custom/Universal"
-                ], listing)
-
-        if sh_filt.get():
-            ff = tk.Frame(sec1, bg=BG3); ff.pack(fill="x", padx=10, pady=2)
-            tk.Label(ff, text="Filter Codes", bg=BG3, fg=ACC4).pack(anchor="w")
-            for i in range(1,5): _add_entry(ff, f"Filter {i}:", f"goods_filtercode{i}", 6, listing)
-            _add_entry(ff, "Filter Level:", "goods_filterlevel", 6, listing)
-
-        self._cb_refresh("init_load")
-
-        sec2 = mk_section(f, f"  GOODS_LIST (Contents: {len(listing['items'])} items)  ")
-        list_container = tk.Frame(sec2, bg=BG); list_container.pack(fill="x")
-
-        def _draw_sub_items():
-            for w in list_container.winfo_children(): w.destroy()
-            for i, i_dict in enumerate(listing["items"]):
-                box = tk.Frame(list_container, bg=BG2, bd=1, relief="solid")
-                box.pack(fill="x", pady=2, padx=4)
-                hk = tk.Frame(box, bg=BG4); hk.pack(fill="x")
-                tk.Label(hk, text=f"Item {i+1}", bg=BG4, fg=FG, font=("Consolas",9,"bold")).pack(side="left", padx=4)
-                if len(listing["items"]) > 1:
-                    tk.Button(hk, text="X", bg=ACC3, fg=BG, relief="flat", command=lambda _i=i: (listing["items"].pop(_i), _draw_sub_items(), self._handle_strict_unlock())).pack(side="right", padx=2, pady=1)
-
-                r1 = tk.Frame(box, bg=BG2); r1.pack(fill="x", pady=2)
-                _add_entry(r1, "Item Index:", "item_index", 14, i_dict)
-                _add_entry(r1, "Name:", "goods_name", 24, i_dict)
-                _add_entry(r1, "Count:", "item_count", 6, i_dict)
-                
-                r2 = tk.Frame(box, bg=BG2); r2.pack(fill="x", pady=2)
-                _add_entry(r2, "List Code:", "goods_list_code", 14, i_dict)
-                _add_entry(r2, "Parent Code:", "parents_list_code", 14, i_dict)
-                if self.session.myshop_raw_prefs.get("manual_dropdowns", 0):
-                    _add_entry(r2, "Class:", "item_class", 6, i_dict, "0=MyCamp, 1=Item, 2=Equip, 3=Drill")
-                else:
-                    _add_drop(r2, "Class:", "item_class", 20, [
-                        "0 - MyCamp Items",
-                        "1 - Item (Box/Use)",
-                        "2 - Equip (Fashion)",
-                        "3 - Drill"
-                    ], i_dict)
-
-                if sh_prev.get():
-                    r3 = tk.Frame(box, bg=BG3); r3.pack(fill="x", pady=2)
-                    for pf in ["pv_x","pv_y","pv_z","pv_d"]: _add_entry(r3, pf.replace("pv_","Preview "), pf, 4, i_dict)
-
-        _draw_sub_items()
-
-        def _add_new_sub():
-            self._handle_strict_unlock()
-            prev = listing["items"][-1]
-            try: nl = str(int(prev.get("goods_list_code",0)) + 1)
-            except: nl = ""
-            try: np = str(int(prev.get("parents_list_code",0)) + 1)
-            except: np = ""
-            listing["items"].append({
-                "item_index": "",
-                "goods_name": "",
-                "item_count": "1",
-                "item_class": "2",
-                "goods_list_code": nl,
-                "parents_list_code": np,
-                "pv_x": "", "pv_y": "", "pv_z": "", "pv_d": ""
-            })
-            if len(listing["items"]) > 1:
-                listing["goods_limit_use"] = "2 - Fashion/Bulk Purchase"
-                if hasattr(self, '_limit_use_v'):
-                    self._limit_use_v.set("2 - Fashion/Bulk Purchase")
-            _draw_sub_items()
-
-        tk.Button(sec2, text="+ Add Sub-Item to Set", bg=ACC1, fg=BG, font=("Consolas",9,"bold"), relief="flat", command=_add_new_sub).pack(pady=6)
-
-        foot = tk.Frame(f, bg=BG); foot.pack(fill="x", pady=15)
-        
-        md_v = tk.IntVar(value=self.session.myshop_raw_prefs.get("manual_dropdowns", 0))
-        def _toggle_md():
-            self.session.myshop_raw_prefs["manual_dropdowns"] = md_v.get()
-            self._build_screen()
-        tk.Checkbutton(foot, text="Manual Mode for All Dropdowns (Bypass limitations)", variable=md_v, command=_toggle_md, bg=BG, fg=FG_DIM, selectcolor=BG3, font=("Consolas", 8)).pack(pady=(0,8))
-        
-        mk_btn(foot, "Generate Script (All Listings)", self._generate_outputs, color=GREEN, fg=BG2).pack()
-
-    def _handle_strict_unlock(self):
-        idx = self._current_idx
-        if self._listings[idx].get("strict_code"):
-            self._listings[idx]["strict_code"] = 0
-            if hasattr(self, '_strict_var'):
-                self._strict_var.set(0)
-
-    def _cb_refresh(self, key):
-        idx = self._current_idx
-        listing = self._listings[idx]
-        
-        # Limit Use handling
-        if listing.get("goods_limit_use","").startswith("1"):
-            self.lt_frm.pack(side="left", padx=10)
-        else:
-            self.lt_frm.pack_forget()
-
-        # Category handling
-        main_cat = listing.get("goods_category", "1")
-        is_myshop = main_cat.startswith("1 - MyShop")
-        
-        if self.session.myshop_raw_prefs.get("manual_dropdowns", 0):
-            return
-
-        c0_list = self.MS_CAT0 if is_myshop else self.MC_CAT0
-        self._cat0_cb["values"] = c0_list
-        c0_val = listing.get("goods_category0", "")
-        if c0_val not in c0_list and c0_list:
-            c0_val = c0_list[0]
-            listing["goods_category0"] = c0_val
-            self._cat0_cb.set(c0_val)
-
-        c0_num = c0_val.split(" ")[0]
-        c1_dict = self.MS_CAT1 if is_myshop else self.MC_CAT1
-        c1_list = c1_dict.get(c0_num, ["0 - None"])
-        self._cat1_cb["values"] = c1_list
-        
-        c1_val = listing.get("goods_category1", "")
-        if c1_val not in c1_list and c1_list:
-            c1_val = c1_list[0]
-            listing["goods_category1"] = c1_val
-            self._cat1_cb.set(c1_val)
-
-        if not is_myshop:
-            self._cat2_cb["values"] = self.MC_CAT2
-        else:
-            self._cat2_cb["values"] = ["0 - None", "1 - Pets??"]
-
-    def _go(self, idx):
-        if idx >= len(self._listings):
-            prev = self._listings[-1]
-            try: ngc = str(int(prev.get("goods_code",0)) + 1)
-            except: ngc = ""
-            base_nl = ""
-            base_np = ""
-            try:
-                last_sub = prev["items"][-1]
-                base_nl = str(int(last_sub.get("goods_list_code", 0)) + 1)
-                base_np = str(int(last_sub.get("parents_list_code", 0)) + 1)
-            except: pass
-
-            new_dict = {}
-            for k,v in prev.items():
-                if k not in ["items","goods_code"]: new_dict[k] = v
-            new_dict["goods_code"] = ngc
-            new_dict["goods_name"] = ""
-            sub = {
-                "item_index": "", "goods_name": "", "item_count": "1", "item_class": "1",
-                "goods_list_code": base_nl, "parents_list_code": base_np,
-                "pv_x": "", "pv_y": "", "pv_z": "", "pv_d": ""
-            }
-            if new_dict.get("strict_code", 1):
-                sub["goods_list_code"] = ngc
-                sub["parents_list_code"] = ngc
-                sub["item_index"] = ngc
-            new_dict["items"] = [sub]
-            self._listings.append(new_dict)
-        self._current_idx = idx
-        self._build_screen()
-
-    def _generate_outputs(self):
-        xml_blocks, sql_goods, sql_list, sql_limit = [], [], [], []
-        today = datetime.date.today().strftime("%Y-%m-%d")
-
-        for lis in self._listings:
-            gc = lis.get("goods_code", "0")
-            name = lis.get("goods_name", "").strip()
-            if not gc or not name: continue
-
-            desc = lis.get("goods_desc", "")
-            set_cnt = len(lis["items"])
-            lu = lis.get("goods_limit_use", "0").split(" ")[0]
-            lt = lis.get("goods_limit_time", "0") if lu == "1" else "0"
-            price = lis.get("goods_cash_price", "0")
-            nw = lis.get("goods_shop_new", 0)
-            pop = lis.get("goods_shop_popular", 0)
-            
-            main_cat = lis.get("goods_category", "1")
-            cat = "1" if main_cat.startswith("1") else "2" # 1 For MyShop or Space, 2 for Fur
-            
-            cat0 = lis.get("goods_category0", "11").split(" ")[0]
-            cat1 = lis.get("goods_category1", "101").split(" ")[0]
-            cat2 = lis.get("goods_category2", "0").split(" ")[0]
-            lvl = lis.get("goods_char_level", "0")
-            sex = lis.get("goods_char_sex", "0")
-            ctype = lis.get("goods_char_type", "15")
-            ldesc = lis.get("goods_limit_desc", "All Characters")
-            issell = lis.get("goods_issell", 1)
-            fc1 = lis.get("goods_filtercode1", "0")
-            fc2 = lis.get("goods_filtercode2", "0")
-            fc3 = lis.get("goods_filtercode3", "0")
-            fc4 = lis.get("goods_filtercode4", "0")
-            flvl = lis.get("goods_filterlevel", "0")
-            dp = lis.get("discount_price", "0")
-            dsd = lis.get("discount_start_date", "1900-01-01 00:00:00")
-            ded = lis.get("discount_end_date", "1900-01-01 00:00:00")
-            ddate = lis.get("discount_display_date", "")
-
-            xml = (
-                f'\t\t<GOODS goods_code="{gc}" goods_name="{name}" '
-                f'goods_desc="{desc}" goods_set_count="{set_cnt}" goods_limit_use="{lu}" '
-                f'goods_limit_time="{lt}" goods_cash_price="{price}" '
-                f'goods_shop_new="{nw}" goods_shop_popular="{pop}" '
-                f'goods_category="{cat}" goods_category0="{cat0}" goods_category1="{cat1}" '
-                f'goods_category2="{cat2}" goods_limit_desc="{ldesc}" '
-                f'goods_char_level="{lvl}" goods_char_sex="{sex}" goods_char_type="{ctype}" '
-                f'goods_issell="{issell}" goods_created="{today.replace("-","")}" '
-                f'goods_filtercode1="{fc1}" goods_filtercode2="{fc2}" '
-                f'goods_filtercode3="{fc3}" goods_filtercode4="{fc4}" goods_filterlevel="{flvl}" '
-                f'goods_discount_price="{dp}" discount_start_date="{dsd}" '
-                f'discount_end_date="{ded}" discount_display_date="{ddate}">\n'
-            )
-
-            for sub in lis["items"]:
-                idx = sub.get("item_index", "0")
-                iname = sub.get("goods_name", name)
-                cnt = sub.get("item_count", "1")
-                cls = sub.get("item_class", "1")
-                glc = sub.get("goods_list_code", "0")
-                plc = sub.get("parents_list_code", "0")
-                vx,vy,vz,vd = sub.get("pv_x",""), sub.get("pv_y",""), sub.get("pv_z",""), sub.get("pv_d","")
-                xml += (
-                    f'\t\t\t<GOODS_LIST item_index="{idx}" goods_name="{iname}" '
-                    f'item_count="{cnt}" item_class="{cls}" preview_x="{vx}" preview_y="{vy}" '
-                    f'preview_z="{vz}" preview_d="{vd}" goods_list_code="{glc}" '
-                    f'parents_list_code="{plc}" />\n'
-                )
-            xml += f'\t\t</GOODS>'
-            xml_blocks.append(xml)
-
-            sql_cat2 = "2" if cat1 == "113" else "0"
-            sql_goods.append(
-                f"INSERT INTO gmg_account.dbo.tbl_goods ("
-                f"goods_code, goods_name, goods_desc, goods_capacity, goods_category, "
-                f"goods_set_count, goods_item_index, goods_item_count, "
-                f"goods_limit_use, goods_limit_time, goods_cash_price, goods_created, "
-                f"goods_shop_new, goods_shop_popular, goods_sellcount, "
-                f"goods_category0, goods_category1, goods_category2, "
-                f"goods_limit_desc, goods_char_level, goods_char_sex, goods_char_type, "
-                f"version_code, goods_issell, goods_image"
-                f") VALUES ("
-                f"{gc}, N'{name.replace(chr(39),chr(39)+chr(39))}', N'{desc.replace(chr(39),chr(39)+chr(39))}', NULL, 0, "
-                f"{set_cnt}, NULL, NULL, "
-                f"{lu}, NULL, {price}, '{today} 00:00:00', "
-                f"{nw}, {pop}, 0, "
-                f"{cat0}, {cat1}, {sql_cat2}, "
-                f"N'{ldesc}', {lvl}, {sex}, {ctype}, "
-                f"{lis['items'][0].get('goods_list_code', gc)}, {issell}, ''"
-                f");"
-            )
-
-            sql_limit.append(
-                f"INSERT INTO gmg_account.dbo.tbl_goods_limit ("
-                f"goods_code, limit_code, goods_limit_price, default_display"
-                f") VALUES ("
-                f"{gc}, {lu}, {price}, 1"
-                f");"
-            )
-
-            for sub in lis["items"]:
-                glc = sub.get("goods_list_code", "0")
-                plc = sub.get("parents_list_code", "0")
-                idx = sub.get("item_index", "0")
-                cnt = sub.get("item_count", "1")
-                cls = sub.get("item_class", "1")
-                sql_list.append(
-                    f"INSERT INTO gmg_account.dbo.tbl_goods_list ("
-                    f"goods_code, item_index, item_count, goods_scode, item_class, "
-                    f"preview_x, preview_y, preview_z, preview_d, goods_list_code, parents_list_code, goods_list_limit"
-                    f") VALUES ("
-                    f"{idx}, {idx}, {cnt}, {idx}, {cls}, "
-                    f"'{sub.get('pv_x', '')}', '{sub.get('pv_y', '')}', '{sub.get('pv_z', '')}', '{sub.get('pv_d', '')}', {glc}, {plc}, NULL"
-                    f");"
-                )
-
-        if not xml_blocks:
-            return messagebox.showinfo("Empty", "No listings filled with proper Index + Name.")
-
-        full_sql = "-- tbl_goods\n" + "\n".join(sql_goods) + "\n\n-- tbl_goods_list\n" + "\n".join(sql_list) + "\n\n-- tbl_goods_limit\n" + "\n".join(sql_limit)
-        full_xml = "\n".join(xml_blocks)
-
-        wins = tk.Toplevel(self.root); wins.title("MyShop Output"); wins.geometry("1100x700"); wins.configure(bg=BG)
-        nb = ttk.Notebook(wins); nb.pack(fill="both", expand=True)
-        make_output_tab = globals().get("make_output_tab")
-        if make_output_tab:
-            make_output_tab(nb, "libcmgds_e XML", full_xml, "myshop_gen_lib.xml", wins)
-            make_output_tab(nb, "SQL DB", full_sql, "myshop_gen_sql.sql", wins)
-        else: _show_text_window("libcmgds_e XML", full_xml, wins)
-
-class ToolboxSwapper(tk.Frame):
-    """XML ↔ CSV converter for use with TO-Toolbox (Trickster Online Toolbox) files only.
-    XML→CSV exports a structured table to a spreadsheet-friendly format.
-    CSV→XML rebuilds a table for internal toolbox use — not for direct import into the game server.
-    """
-    ACC = ACC19
-
-    def __init__(self, parent, root, session):
-        super().__init__(parent, bg=BG)
-        self.root = root; self.session = session
-        self._src_path   = None
-        self._src_type   = None   # "xml_table","xml_raw","csv"
-        self._tags       = []
-        self._table_name = ""
-        self._base_path  = None
-        self._build()
-
-    def _clear(self): [w.destroy() for w in self.winfo_children()]
-
-    def _is_full_table(self, text):
-        return (bool(re.search(r'<TABLE\s+name\s*=', text, re.IGNORECASE)) and
-                bool(re.search(r'<FIELDINFO\s+Name\s*=', text, re.IGNORECASE)))
-
-    @staticmethod
-    def _detect_text_columns(headers, all_rows):
-        """Return a set of column names whose values should be CDATA-wrapped.
-        A column is text if any row has a value that is not purely numeric
-        (int or float), OR if any row is blank/null while another has text.
-        Pure numeric columns (int or float only, even if sometimes empty) are not wrapped.
-        """
-        text_cols = set()
-        for h in headers:
-            has_text   = False
-            has_number = False
-            has_blank  = False
-            for r in all_rows:
-                val = r.get(h, "").strip()
-                if val == "":
-                    has_blank = True
-                    continue
-                try:
-                    float(val)
-                    has_number = True
-                except ValueError:
-                    has_text = True
-            # Column is text if it has any text values,
-            # OR if it has blanks AND numeric — could still be text/null mix
-            # but we only force CDATA when text is confirmed present
-            if has_text:
-                text_cols.add(h)
-            elif has_blank and not has_number:
-                # All blank — treat as text (null text field)
-                text_cols.add(h)
-        return text_cols
-
-    def _build(self):
-        self._clear()
-        tk.Label(self, text="TOOLBOX SWAPPER",
-                 font=("Consolas",16,"bold"), bg=BG, fg=self.ACC).pack(pady=(20,2))
-        tk.Label(self,
-                 text="For use with TO-Toolbox (Trickster Online Toolbox) files only.\n"
-                      "XML → CSV  exports a full structured table to a spreadsheet-friendly format.\n"
-                      "CSV → XML  rebuilds the table structure for internal toolbox use.\n"
-                      "Note: CSV→XML output is intended for use within this toolbox, not for\n"
-                      "direct import back into the game server.",
-                 bg=BG, fg=FG_DIM, font=("Consolas",8), justify="center").pack(pady=(0,10))
-
-        # Step 1: source
-        s1 = mk_section(self, "  Step 1 — Load Source File")
-        self._src_status   = tk.StringVar(value="No file loaded")
-        self._src_type_lbl = tk.StringVar(value="")
-        r1 = tk.Frame(s1, bg=BG); r1.pack(fill="x", padx=8, pady=6)
-        tk.Label(r1, textvariable=self._src_status, bg=BG, fg=FG_GREY,
-                 font=("Consolas",9)).pack(side="left", fill="x", expand=True)
-        mk_btn(r1, "📂  Load XML", self._load_xml, color=self.ACC, fg=BG2).pack(side="right", padx=(4,0))
-        mk_btn(r1, "📂  Load CSV", self._load_csv, color=BG3).pack(side="right", padx=(4,0))
-        tk.Label(s1, textvariable=self._src_type_lbl,
-                 bg=BG, fg=FG_GREY, font=("Consolas",8)).pack(anchor="w", padx=10, pady=(0,4))
-
-        # Step 2: direction
-        s2 = mk_section(self, "  Step 2 — Direction")
-        self._dir_var = tk.StringVar(value="xml_to_csv")
-        for lbl, val in [("XML → CSV  (export table to spreadsheet)", "xml_to_csv"),
-                         ("CSV → XML  (rebuild table for toolbox use)", "csv_to_xml")]:
-            tk.Radiobutton(s2, text=lbl, variable=self._dir_var, value=val,
-                           bg=BG, fg=FG, selectcolor=BG3, activebackground=BG,
-                           font=("Consolas",9)).pack(anchor="w", padx=10, pady=2)
-        tk.Label(s2,
-                 text="  CSV → XML: optionally load a Base XML in Step 3 to reuse its FIELDINFO headers.",
-                 bg=BG, fg=FG_GREY, font=("Consolas",7)).pack(anchor="w", padx=10, pady=(0,6))
-
-        # Step 3: optional base XML
-        s3 = mk_section(self, "  Step 3 — Base XML  (CSV → XML only, optional — preserves original FIELDINFO headers)")
-        self._base_status = tk.StringVar(value="None — minimal header will be generated from CSV columns")
-        r3 = tk.Frame(s3, bg=BG); r3.pack(fill="x", padx=8, pady=6)
-        tk.Label(r3, textvariable=self._base_status, bg=BG, fg=FG_GREY,
-                 font=("Consolas",9)).pack(side="left", fill="x", expand=True)
-        mk_btn(r3, "📂  Load Base XML", self._load_base_xml, color=BG3).pack(side="right", padx=(4,0))
-        mk_btn(r3, "✕  Clear",          self._clear_base,    color=BG4).pack(side="right")
-
-        # Run
-        nav = tk.Frame(self, bg=BG); nav.pack(pady=8)
-        mk_btn(nav, "⚡  Convert", self._run,
-               color=self.ACC, fg=BG2, font=("Consolas",11,"bold")).pack(side="left", padx=8)
-        self._log_txt = scrolledtext.ScrolledText(self, font=("Consolas",8), bg=BG2, fg=FG, height=8)
-        self._log_txt.pack(fill="both", expand=True, padx=10, pady=6)
-        self._log_txt.config(state="disabled")
-
-    def _log(self, msg):
-        self._log_txt.config(state="normal")
-        self._log_txt.insert("end", msg + "\n")
-        self._log_txt.see("end"); self._log_txt.config(state="disabled")
-        self.update_idletasks()
-
-    def _load_xml(self):
-        p = filedialog.askopenfilename(
-            title="Load XML File",
-            filetypes=[("XML","*.xml"),("All","*.*")], parent=self.root)
-        if not p: return
-        head = open(p, encoding="utf-8", errors="replace").read(8192)
-        if self._is_full_table(head):
-            ftype = "xml_table"
-        elif "<ROW>" in head:
-            ftype = "xml_raw"
-            if not messagebox.askyesno(
-                "Raw ROW file detected",
-                "This file has no TABLE name= or FIELDINFO headers — it is a raw ROW output.\n\n"
-                "It can still be converted to CSV, but the output will not have a structured table header.\n\n"
-                "Do you wish to continue anyway?", parent=self.root):
-                return
-        else:
-            messagebox.showwarning("Unrecognised",
-                "No <ROW> blocks found in this file.", parent=self.root); return
-        self._src_path = p; self._src_type = ftype
-        self._tags = _detect_row_tags(p)
-        row_count = _count_rows_in_file(p)
-        m = re.search(r"<TABLE\s+name\s*=\s*[\"']([^\"']+)[\"']", head, re.IGNORECASE)
-        self._table_name = m.group(1) if m else os.path.splitext(os.path.basename(p))[0]
-        self._src_status.set(f"✓  {os.path.basename(p)}  ({row_count:,} rows, {len(self._tags)} fields)")
-        self._src_type_lbl.set(
-            "Type: Full XML table (TABLE name= + FIELDINFO headers)" if ftype == "xml_table"
-            else "⚠  Type: Raw ROW file (no table header)")
-        self._dir_var.set("xml_to_csv")
-
-    def _load_csv(self):
-        p = filedialog.askopenfilename(
-            title="Load CSV File",
-            filetypes=[("CSV","*.csv"),("All","*.*")], parent=self.root)
-        if not p: return
-        headers = []
-        row_count = 0
-        try:
-            with open(p, encoding="utf-8-sig", errors="replace", newline="") as f:
-                reader = csv.reader(f)
-                for row in reader:
-                    if row and not row[0].strip().startswith("#"):
-                        headers = [h.strip() for h in row]; break
-            with open(p, encoding="utf-8-sig", errors="replace", newline="") as f:
-                first = True
-                for row in csv.reader(f):
-                    if first: first = False; continue
-                    if any(c.strip() for c in row): row_count += 1
-        except Exception as e:
-            messagebox.showerror("Error", f"Cannot read CSV:\n{e}", parent=self.root); return
-        if not headers:
-            messagebox.showwarning("Empty", "No header row found in CSV.", parent=self.root); return
-        self._src_path = p; self._src_type = "csv"
-        self._tags = headers
-        self._table_name = os.path.splitext(os.path.basename(p))[0]
-        self._src_status.set(f"✓  {os.path.basename(p)}  ({row_count:,} data rows, {len(headers)} columns)")
-        self._src_type_lbl.set("Type: CSV  (column types detected automatically from values)")
-        self._dir_var.set("csv_to_xml")
-
-    def _load_base_xml(self):
-        p = filedialog.askopenfilename(
-            title="Load Base XML (for CSV→XML FIELDINFO headers)",
-            filetypes=[("XML","*.xml"),("All","*.*")], parent=self.root)
-        if not p: return
-        head = open(p, encoding="utf-8", errors="replace").read(8192)
-        if not re.search(r'<TABLE\s+name\s*=', head, re.IGNORECASE):
-            messagebox.showwarning("Not a full table",
-                "This XML has no TABLE name= header.\nPlease load a full XML table.", parent=self.root); return
-        self._base_path = p
-        m = re.search(r"<TABLE\s+name\s*=\s*[\"']([^\"']+)[\"']", head, re.IGNORECASE)
-        tname = m.group(1) if m else os.path.basename(p)
-        self._base_status.set(f"✓  {os.path.basename(p)}  (table: {tname})")
-
-    def _clear_base(self):
-        self._base_path = None
-        self._base_status.set("None — minimal header will be generated from CSV columns")
-
-    def _xml_to_csv(self):
-        tags = self._tags or _detect_row_tags(self._src_path)
-        if not tags:
-            messagebox.showerror("No fields", "No fields detected in the XML.", parent=self.root); return
-        out_io = io.StringIO()
-        writer = csv.writer(out_io, quoting=csv.QUOTE_ALL)
-        writer.writerow(tags)
-        row_count = 0
-        for row_txt in _iter_xml_rows(self._src_path):
-            # Use _get_tag which strips CDATA wrappers automatically
-            writer.writerow([_get_tag(row_txt, t) for t in tags])
-            row_count += 1
-        csv_text = out_io.getvalue()
-        self._log(f"Converted {row_count} rows, {len(tags)} columns.")
-        out_fname = self._table_name + ".csv"
-        csv_dir = _APP_SETTINGS.get("csv_exports_dir", "") or os.path.join(os.getcwd(), "csv_exports")
-        if _bypass_dialogs():
-            out_path = os.path.join(csv_dir, out_fname)
-            os.makedirs(csv_dir, exist_ok=True)
-        else:
-            out_path = filedialog.asksaveasfilename(
-                title="Save CSV", initialdir=csv_dir, initialfile=out_fname,
-                defaultextension=".csv",
-                filetypes=[("CSV","*.csv"),("All","*.*")], parent=self.root)
-        if not out_path: return
-        os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
-        with open(out_path, "w", encoding="utf-8-sig", newline="") as f:
-            f.write(csv_text)
-        self._log(f"✓  Saved: {out_path}")
-        messagebox.showinfo("Done", f"CSV saved:\n{out_path}\n\n{row_count} rows exported.", parent=self.root)
-
-    def _csv_to_xml(self):
-        try:
-            with open(self._src_path, encoding="utf-8-sig", errors="replace", newline="") as f:
-                reader = csv.DictReader(f)
-                csv_rows = [r for r in reader if any(v.strip() for v in r.values())]
-                headers  = list(reader.fieldnames or [])
-        except Exception as e:
-            messagebox.showerror("Error", f"Cannot read CSV:\n{e}", parent=self.root); return
-        if not csv_rows:
-            messagebox.showwarning("Empty", "No data rows found in CSV.", parent=self.root); return
-        row_count = len(csv_rows)
-
-        # Detect which columns need CDATA vs plain numeric tags
-        text_cols = self._detect_text_columns(headers, csv_rows)
-        self._log(f"Text/CDATA columns: {', '.join(sorted(text_cols)) if text_cols else 'none'}")
-
-        def _fmt_field(tag, val):
-            if tag in text_cols:
-                inner = val if val else " "   # null text = single space per TO convention
-                return f"<{tag}><![CDATA[{inner}]]></{tag}>"
-            return f"<{tag}>{val}</{tag}>"
-
-        # Build ROW blocks — no indentation, matching raw toolbox output style
-        row_blocks = []
-        for r in csv_rows:
-            parts = ["<ROW>"]
-            for h in headers:
-                parts.append(_fmt_field(h, r.get(h, "").strip()))
-            parts.append("</ROW>")
-            row_blocks.append("\n".join(parts))
-
-        warn_tableid = False
-        warn_msg     = ""
-
-        if self._base_path:
-            # ── Use base XML header — preserve its exact quote style throughout ──
-            base_text = open(self._base_path, encoding="utf-8", errors="replace").read()
-
-            # Strip all existing rows
-            stripped = re.sub(r"<ROW>.*?</ROW>", "", base_text, flags=re.DOTALL)
-
-            # Update RowCount preserving source quote char
-            rc_pat = re.compile(r"(RowCount\s*=\s*[\"'])(\d+)([\"'])", re.IGNORECASE)
-            stripped = rc_pat.sub(lambda m: m.group(1)+str(row_count)+m.group(3),
-                                  stripped, count=1)
-
-            # Update FieldCnt preserving source quote char
-            stripped = _update_fieldcnt(stripped)
-
-            # Insert rows before </Table>
-            rows_text = "\n".join(row_blocks) + "\n"
-            out_text = re.sub(r"(</Table>)", rows_text + r"\1", stripped,
-                              count=1, flags=re.IGNORECASE)
-
-            m = re.search(r"<TABLE\s+name\s*=\s*[\"']([^\"']+)[\"']",
-                          base_text, re.IGNORECASE)
-            out_fname = (m.group(1) if m else self._table_name) + ".xml"
-
-        else:
-            # ── Generate minimal header — look up correct quote style + TableInfoID ──
-            tname = self._table_name
-            attr_q, tid, needs_warn = _lookup_table_info(tname)
-            fi_q = "'"   # FIELDINFO attributes always use single quotes in TO
-
-            # Special double-quote tables: TABLE attrs use " but FIELDINFO uses '
-            # attr_q handles TABLE line; fi_q is always '
-            def _a(val):    return f'{attr_q}{val}{attr_q}'
-            def _fi(val):   return f"{fi_q}{val}{fi_q}"
-
-            fi_lines = "\n".join(
-                f'<FIELDINFO Name={_fi(h)} IsKey={_fi("1" if i==0 else "0")}'
-                f' DataType={_fi("STRING" if h in text_cols else "INT")}></FIELDINFO>'
-                for i, h in enumerate(headers)
-            )
-            field_cnt = len(headers)
-            out_fname = tname + ".xml"
-            out_text = (
-                f"<TABLE name={_a(tname)} RowCount={_a(str(row_count))}"
-                f" TableInfoID={_a(tid)} FieldCnt={_a(str(field_cnt))}>\n"
-                f"{fi_lines}\n" +
-                "\n".join(row_blocks) +
-                "\n</Table>"
-            )
-
-            if needs_warn or tname.lower() == "itemparam2":
-                warn_tableid = True
-                warn_msg = _tableinfoid_warning_msg(tname)
-
-        self._log(f"Built {row_count} rows from CSV.")
-        lib_dir = _APP_SETTINGS.get("libconfig_dir", os.path.join(os.getcwd(), "libconfig"))
-        if _bypass_dialogs():
-            out_path = os.path.join(lib_dir, out_fname)
-            os.makedirs(lib_dir, exist_ok=True)
-        else:
-            out_path = filedialog.asksaveasfilename(
-                title="Save XML Table", initialdir=lib_dir, initialfile=out_fname,
-                defaultextension=".xml",
-                filetypes=[("XML","*.xml"),("All","*.*")], parent=self.root)
-        if not out_path: return
-        os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
-        with open(out_path, "w", encoding="utf-8") as f:
-            f.write(out_text)
-        self._log(f"✓  Saved: {out_path}")
-        if warn_tableid:
-            messagebox.showwarning("Check TableInfoID",
-                f"XML saved:\n{out_path}\n\n{warn_msg}", parent=self.root)
-        else:
-            messagebox.showinfo("Done",
-                f"XML saved:\n{out_path}\n\n{row_count} rows written.", parent=self.root)
-
-    def _run(self):
-        if not self._src_path:
-            messagebox.showwarning("Missing", "Load a source file first.", parent=self.root); return
-        self._log_txt.config(state="normal"); self._log_txt.delete("1.0","end")
-        self._log_txt.config(state="disabled")
-        self._log(f"Source   : {os.path.basename(self._src_path)}")
-        self._log(f"Direction: {self._dir_var.get()}\n")
-        try:
-            if self._dir_var.get() == "xml_to_csv":
-                self._xml_to_csv()
-            else:
-                self._csv_to_xml()
-        except Exception as e:
-            import traceback
-            self._log(f"ERROR: {e}\n{traceback.format_exc()}")
-            messagebox.showerror("Error", f"Conversion failed:\n{e}", parent=self.root)
-
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 # NCASH UPDATER (Combined) — landing screen that routes to NCashUpdaterSimple or NCashUpdaterParent,
 # with a pop-out Ticket Calculator widget always available
@@ -12420,18 +10876,15 @@ TOOLS = [
     ("14", "Row\nDuplicator",            ACC13, RowDuplicator),
     ("15", "Data\nExtract",              ACC12, DataExtract),
     ("16", "Mass Variable\nManip.",      ACC14, MassVarManip),
-    ("17", "XML Bulk\nUpdater",           ACC18, XMLBulkUpdater),
-    ("18", "Toolbox\nSwapper",            ACC19, ToolboxSwapper),
-    ("19", "MyShop Lib\n& DB Gen", "#ff9e99", MyShopTool),
 ]
 
 class CombinedApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Mewsie's Multi-XML Toolbox")
+        self.title("Mewsie's ItemParam Toolbox")
         # Geometry + minsize. update() forces the WM to apply before widgets render.
-        self.geometry("1280x920")
-        self.minsize(1100, 920)
+        self.geometry("1280x900")
+        self.minsize(1100, 860)
         self.resizable(True, True)
         self.configure(bg=BG2)
         self.update_idletasks()
@@ -12449,7 +10902,7 @@ class CombinedApp(tk.Tk):
         sidebar_outer.pack_propagate(False)
 
         # Static header (never scrolls)
-        tk.Label(sidebar_outer, text="MEWSIE'S\nMULTI-XML\nTOOLBOX",
+        tk.Label(sidebar_outer, text="MEWSIE'S\nITEMPARAM\nTOOLBOX",
                  font=("Consolas",10,"bold"), bg=BG2, fg=FG,
                  justify="center").pack(pady=(14,8))
         tk.Frame(sidebar_outer, bg=BG4, height=1).pack(fill="x", padx=10, pady=2)
@@ -12501,7 +10954,7 @@ class CombinedApp(tk.Tk):
         tk.Frame(footer, bg=BG4, height=1).pack(fill="x", padx=10, pady=4)
         mk_btn(footer, "⚙  Settings", lambda: _open_settings_window(self),
                color=BG2, fg=FG_GREY, font=("Consolas",8)).pack(fill="x", padx=6, pady=2)
-        tk.Label(footer, text="<3 u forever Trickster --Mewsie",
+        tk.Label(footer, text="Scroll list ↕ for more tools",
                  font=("Consolas",6), bg=BG2, fg=FG_GREY).pack(pady=(0,4))
 
         # ── Content area ──────────────────────────────────────────────────
@@ -12532,7 +10985,7 @@ class CombinedApp(tk.Tk):
         self._tool_instances[idx].pack(fill="both", expand=True)
         self._current_tool = idx
         num,label,_,_ = TOOLS[idx]
-        self.title(f"Mewsie's Multi-XML Toolbox  —  Tool {num}: {label.replace(chr(10),' ')}")
+        self.title(f"Mewsie's ItemParam Toolbox  —  Tool {num}: {label.replace(chr(10),' ')}")
 
 
 if __name__ == "__main__":
