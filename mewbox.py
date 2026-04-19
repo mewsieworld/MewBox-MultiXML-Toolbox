@@ -10095,7 +10095,7 @@ class RowDuplicator(tk.Frame):
             stem = os.path.splitext(os.path.basename(path))[0]
             out_name = stem + "_duplicated.xml"
             out_path = os.path.join(out_folder, out_name)
-            with open(out_path, "w", encoding="utf-8") as f:
+            with open(out_path, "w", encoding="utf-8", newline="") as f:
                 f.write(out_text)
             results.append(out_name)
 
@@ -10608,7 +10608,7 @@ class MassVarManip(tk.Frame):
                 filetypes=[("XML","*.xml"),("All","*.*")],
                 parent=self.root)
         if not out_path: return
-        with open(out_path,"w",encoding="utf-8") as f: f.write(out_text)
+        with open(out_path,"w",encoding="utf-8",newline="") as f: f.write(out_text)
         messagebox.showinfo("Done", f"Changed {rows_changed} row(s).\nSaved to:\n{out_path}")
 
 
@@ -10748,7 +10748,7 @@ class ReorderXML(tk.Frame):
                 initialdir=default_dir, initialfile=stem+"_reordered.xml",
                 defaultextension=".xml", filetypes=[("XML","*.xml"),("All","*.*")], parent=self.root)
         if not out_path: return
-        with open(out_path,"w",encoding="utf-8") as f: f.write(out_text)
+        with open(out_path,"w",encoding="utf-8",newline="") as f: f.write(out_text)
         messagebox.showinfo("Done", f"Sorted {len(new_rows)} rows.\nSaved to:\n{out_path}")
 
 

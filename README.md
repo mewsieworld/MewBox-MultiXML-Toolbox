@@ -26,7 +26,7 @@ May your gardens grow ever-fruitful, ever-flourishing, ever-faithful.
 
 **To launch:** double-click `launch.bat`. It will check your Python installation, install any missing dependencies, create the default output folders (`libconfig/`, `reports/`, `MyShop/`), and start the toolbox.
 
-# NOTE - IF YOU ARE USING TO-TOOLBOX/A REGULAR LIBCONFIG:
+# NOTE - IF YOU ARE USING TO-TOOLBOX/A REGULAR LIBCONFIG (NOT SPLIT XML TABLES):
 
 **YOU MUST EXPORT EACH TABLE FIRST USING TO-TOOLBOX!**
 
@@ -89,7 +89,7 @@ All generators accept **CSV or Excel import** and include **downloadable templat
 | **Row Counter / Updater** | Counts rows in XML files and optionally rewrites the `RowCount` attribute in the table header. |
 | **Fix ItemParam** | Cleans up common formatting issues in ItemParam XML files (CDATA wrapping, decimal precision, tag structure). |
 | **Row Duplicator** | Duplicates rows across one or more XML files, applying math equations to any field (e.g. `y+1` to increment IDs). |
-| **Mass Variable Manipulation** | Applies bulk edits — math expressions, text replace, regex replace, conditional filtering — to any field across all matched rows in an XML file. Genuinely powerful and worth reading the built-in warning before using. |
+| **Mass Variable Manipulation** | Applies bulk edits — math expressions, text replace, regex replace, conditional filtering — to any field across all matched rows in an XML file. Genuinely powerful and worth reading the built-in warning before using. Also allows CSVs now! |
 
 ### Auditors & Reporters
 | Tool | What it does |
@@ -99,7 +99,12 @@ All generators accept **CSV or Excel import** and include **downloadable templat
 | **Data Extract** | Exports selected fields from any XML file to CSV, with optional row filtering and a live row preview. |
 | **ID Checker** | Scans one or more XML files for duplicate or conflicting `<ID>` values. |
 | **XML Bulk Updater** | Merges one or more raw-ROW patch files (output from any toolbox generator) into a full structured XML table. Rows with matching IDs are replaced; new IDs are appended. RowCount is updated automatically. Output filename is taken directly from the TABLE name attribute. The source file's formatting is preserved exactly — no indentation added, no XML declaration inserted. |
+
+### Other Tools
+| Tool | What it does |
+|---|---|
 | **Toolbox Swapper** | Converts between XML tables and CSV — in both directions. XML → CSV exports all field values from a structured table. CSV → XML rebuilds the table, optionally using a Base XML to preserve the original FIELDINFO headers and structure. Raw-ROW XML files and plain CSVs (without TABLE headers) are supported with a warning prompt before proceeding. |
+| **MyShop + DB Generator** | Make MyShop Listings for MyShop easily (Polar Files only) |
 
 ---
 

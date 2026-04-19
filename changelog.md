@@ -21,3 +21,6 @@ v1.3 - Mass Variable Manip Overhaul
 - Auto-set conditional statements to OFF by default on the first one ONLY and then if you modify it in any
 	way, it will set ON. When you add secondary statements, they are set ON by default and turn back ON when
 	you change any of their values.
+
+v1.4 - Hotfix
+- Fixed rows having random new lines added to them in Mass Variable Manip
