@@ -24,3 +24,7 @@ v1.3 - Mass Variable Manip Overhaul
 
 v1.4 - Hotfix
 - Fixed rows having random new lines added to them in Mass Variable Manip
+
+v.1.5 - Hotfix pt 2 electric boogaloo + Bonus Item Box Generator
+- Added more detailed reports to the XML Comparison Tool
+- Added BonusPresentItemInfo generator to the Box Generator tool

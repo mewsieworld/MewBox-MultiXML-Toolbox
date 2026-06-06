@@ -253,11 +253,12 @@ def bulk_update_ncash(xml_text, updates):
 # ── Column-header sets for CSV field recognition ─────────────────────────────
 _SKIP_HEADERS = {
     "id","level","rate","lv","luck","lvl","chance","prob","itemcnt","count",
-    "droprate","dropcnt","dropid","drop","qty","quantity","amount","weight",
+    "droprate","dropid","drop","qty","quantity","amount","weight",
 }
 
 def _norm_hdr(h):
-    return re.sub(r"[^a-z0-9]", "", h.strip().lower())
+    h_clean = re.sub(r'[\._ ]\d+$', '', h.strip())
+    return re.sub(r"[^a-z0-9]", "", h_clean.lower())
 
 # Headers that identify box-name columns (the column header IS the box name)
 # A column is a box-name column when its header is non-empty, not a known skip
@@ -267,7 +268,15 @@ _FIELD_HDRS = {
     "cmtfilename","cmtfn","cmtbundlenum","cmtbn",
     "weight","value","minlevel","level","lvl","money","ncash","tickets","ticket",
     "options","chrtypeflags","chrtypeflag","recycle","recyclable",
-    "boxid","contents","content","id",
+    "boxid","contents","content","id","boxname","box",
+    "itemid","itemcode",
+    "refineindex","refinetype",
+    "contentsname","contentname","contentsname1","contentsname2","itemname",
+    "type",
+    "dropcnt",
+    # BonusPresentItemInfo columns
+    "pickbonuspresentid","unpickbonuspresentid","bonusmode","bonusitems","pickbonusid","unpickbonusid",
+    "presentid","parentbox","presentboxid","boxids","presentbox",
 }
 
 def _is_box_name_header(h):
@@ -276,6 +285,8 @@ def _is_box_name_header(h):
     if hn.isdigit(): return False
     if hn in _SKIP_HEADERS: return False
     if hn in _FIELD_HDRS: return False
+    # Exclude indexed bonus columns: pickbonuspresentid0, unpickbonuspresentid2, etc.
+    if re.match(r'^(pick|unpick)bonuspresentid\d+$', hn): return False
     return True
 
 def _parse_options_cell(cell):
@@ -367,9 +378,46 @@ _HDR_TO_CFGKEY = {
     "recycle":      "_recycle",
     "recyclable":   "_recycle",
     "boxid":        "_boxid",      # box's own ID
+    "presentid":    "_boxid",
+    "parentbox":    "_boxid",
+    "presentboxid": "_boxid",
+    "boxids":       "_boxid",
+    "presentbox":   "_boxid",
     "id":           "_id",         # ambiguous – could be box ID or item ID
+    "itemid":       "_id",
+    "itemcode":     "_id",
     "contents":     "_contents",
     "content":      "_contents",
+    "contentsname": "_contentsname",
+    "contentname":  "_contentsname",
+    "contentsname1":"_contentsname",
+    "contentsname2":"_contentsname",
+    "itemname":     "_contentsname",
+    # BonusPresentItemInfo
+    "pickbonuspresentid":   "bonus_pick_id",
+    "unpickbonuspresentid": "bonus_unpick_id",
+    "pickbonuspresent":     "bonus_pick_id",
+    "unpickbonuspresent":   "bonus_unpick_id",
+    "bonuspickpresentid":   "bonus_pick_id",
+    "bonusunpickpresentid": "bonus_unpick_id",
+    "bonuspickid":          "bonus_pick_id",
+    "bonusunpickid":        "bonus_unpick_id",
+    "pickbonusid":          "bonus_pick_id",
+    "unpickbonusid":        "bonus_unpick_id",
+    "pickid":               "bonus_pick_id",
+    "unpickid":             "bonus_unpick_id",
+    "pick":                 "bonus_pick_id",
+    "unpick":               "bonus_unpick_id",
+    "poola":                "bonus_pick_id",
+    "poolb":                "bonus_unpick_id",
+    "pool":                 "bonus_pick_id",
+    "mode":                 "bonus_mode",
+    "bonusmode":            "bonus_mode",
+    "bonusitems":           "bonus_enabled",
+    "refineindex":          "_refineindex",
+    "refinetype":           "_refinetype",
+    "type":                 "present_type",
+    "dropcnt":              "drop_cnt",
 }
 
 # Filename fields — keep only safe path characters (letters, digits, . _ - \ / : space)
@@ -380,8 +428,31 @@ def _sanitise_filename(val):
     # Explicitly keep backslash so Windows paths like data\\item\\foo.nri survive
     return re.sub(r"[^\w .\/:\\\-]", "", val, flags=re.ASCII)
 
+def _clean_excel_val(val):
+    val = val.strip()
+    if not val:
+        return ""
+    # If the whole value is a float like "123.0", convert it to "123"
+    if val.endswith(".0"):
+        prefix = val[:-2]
+        if prefix.isdigit() or (prefix.startswith("-") and prefix[1:].isdigit()):
+            return prefix
+    # Also handle slash-separated floats like "2.0/32.0/256.0"
+    if "/" in val:
+        parts = []
+        for p in val.split("/"):
+            p_clean = p.strip()
+            if p_clean.endswith(".0"):
+                prefix = p_clean[:-2]
+                if prefix.isdigit() or (prefix.startswith("-") and prefix[1:].isdigit()):
+                    p_clean = prefix
+            parts.append(p_clean)
+        return "/".join(parts)
+    return val
+
 def _apply_field_col(cfg_override, key, val):
     """Apply a parsed field value to cfg_override dict."""
+    val = _clean_excel_val(val)
     if key in _FILENAME_KEYS:
         cfg_override[key] = _sanitise_filename(val)
     elif key == "_options":
@@ -404,8 +475,16 @@ def _apply_field_col(cfg_override, key, val):
             # A Ticket/Tickets column means Recyclable — auto-set recycle flag
             cfg_override["opt_recycle"] = 262144
         except: pass
+    elif key == "_refineindex":
+        try: cfg_override["refine_index"] = int(round(float(val)))
+        except: pass
+    elif key == "_refinetype":
+        try: cfg_override["refine_type"] = int(round(float(val)))
+        except: pass
     elif not key.startswith("_"):
         cfg_override[key] = val
+    # BonusPresentItemInfo fields — stored directly in cfg_override
+    # (bonus_pick_id, bonus_unpick_id, bonus_mode, bonus_enabled handled above via non-_ path)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CMSetItemParam.xml — Set Generator helpers
@@ -470,7 +549,7 @@ def parse_set_csv(text):
     if not raw_rows: return []
     headers   = [h.strip() for h in raw_rows[0]]
     hn_list   = [_norm_set_hdr(h) for h in headers]
-    data_rows = raw_rows[1:]
+    data_rows = [r for r in raw_rows[1:] if any(cell.strip() for cell in r)]
 
     # Detect layout
     has_set_id_col  = any(hn in _SET_ID_KEYS  for hn in hn_list)
@@ -601,6 +680,23 @@ def build_set_row(set_cfg):
     return "\n".join(lines)
 
 
+def _parse_id_val(val):
+    val = val.strip()
+    if not val:
+        return ""
+    if val.endswith(".0"):
+        val = val[:-2]
+    try:
+        f = float(val)
+        if f.is_integer():
+            return str(int(f))
+    except ValueError:
+        pass
+    if val.isdigit():
+        return val
+    return ""
+
+
 def parse_grouped_csv(text):
     """Parse a box-definition CSV.
 
@@ -625,13 +721,264 @@ def parse_grouped_csv(text):
     if not rows: return []
     headers = [h.strip() for h in rows[0]]
     hnorms  = [_norm_hdr(h) for h in headers]
-    data_rows = rows[1:]
+    data_rows = [r for r in rows[1:] if any(cell.strip() for cell in r)]
+
+    # Group columns by duplicate suffix or repeating header blocks to support horizontal wide format
+    suffix_map = {}
+    first_hn = next((hn for hn in hnorms if hn), "")
+    current_suffix = 0
+    for ci, h in enumerate(headers):
+        hn = hnorms[ci]
+        m = re.search(r'[\._ ](\d+)$', h.strip())
+        if m:
+            suffix = int(m.group(1))
+            suffix_map.setdefault(suffix, []).append(ci)
+        else:
+            if ci > 0 and first_hn and hn == first_hn:
+                current_suffix += 1
+            suffix_map.setdefault(current_suffix, []).append(ci)
 
     # Identify box-name columns
     box_col_indices = [i for i, h in enumerate(headers) if _is_box_name_header(h)]
-    if not box_col_indices: return []
 
     results = []
+
+    # ── DUPLICATE-SUFFIX WIDE FORMAT ──
+    # If there are multiple suffix groups (e.g. ID.1, ID.2, Contents.1, Contents.2 etc.),
+    # we treat it as horizontally grouped boxes.
+    if len(suffix_map) > 1:
+        for suffix in sorted(suffix_map.keys()):
+            span = suffix_map[suffix]
+            
+            # Classify columns in the span
+            id_col = None
+            box_id_col = None
+            contents_col = None
+            contentsname_col = None
+            rate_cols = []
+            itemcnt_col = None
+            field_cols = {}
+            bonus_pick_col = None
+            bonus_unpick_col = None
+            bonus_pick_slot_cols = {}
+            bonus_unpick_slot_cols = {}
+            
+            for ci in span:
+                hn = _norm_hdr(headers[ci])
+                _m_pick   = re.match(r'^pickbonuspresentid(\d+)$', hn)
+                _m_unpick = re.match(r'^unpickbonuspresentid(\d+)$', hn)
+                if _m_pick:
+                    bonus_pick_slot_cols[int(_m_pick.group(1))] = ci; continue
+                if _m_unpick:
+                    bonus_unpick_slot_cols[int(_m_unpick.group(1))] = ci; continue
+                    
+                if hn == "id":
+                    if id_col is None: id_col = ci
+                elif hn in _HDR_TO_CFGKEY:
+                    cfgkey = _HDR_TO_CFGKEY[hn]
+                    if cfgkey == "_boxid":
+                        box_id_col = ci
+                    elif cfgkey == "_id":
+                        if id_col is None: id_col = ci
+                    elif cfgkey == "_contents":
+                        contents_col = ci
+                    elif cfgkey == "_contentsname":
+                        contentsname_col = ci
+                    elif cfgkey == "bonus_pick_id":
+                        bonus_pick_col = ci
+                        field_cols[ci] = cfgkey
+                    elif cfgkey == "bonus_unpick_id":
+                        bonus_unpick_col = ci
+                        field_cols[ci] = cfgkey
+                    else:
+                        field_cols[ci] = cfgkey
+                elif hn in ("itemcnt", "count"):
+                    itemcnt_col = ci
+                elif hn in _SKIP_HEADERS:
+                    rate_cols.append(ci)
+                else:
+                    rate_cols.append(ci)
+            
+            # Build cfg_override from field columns
+            group_cfg = {}
+            for ci, cfgkey in field_cols.items():
+                for row in data_rows:
+                    val = row[ci].strip() if ci < len(row) else ""
+                    if val:
+                        _apply_field_col(group_cfg, cfgkey, val)
+                        break
+            
+            # Box's own ID
+            if box_id_col is not None:
+                for row in data_rows:
+                    val = row[box_id_col].strip() if box_id_col < len(row) else ""
+                    parsed_bid = _parse_id_val(val)
+                    if parsed_bid:
+                        group_cfg["id"] = parsed_bid
+                        break
+            if "id" not in group_cfg and id_col is not None:
+                for row in data_rows:
+                    val = row[id_col].strip() if id_col < len(row) else ""
+                    parsed_bid = _parse_id_val(val)
+                    if parsed_bid:
+                        group_cfg["id"] = parsed_bid
+                        break
+            
+            # Box name: find first non-empty in Name/BoxName/Box
+            boxname_col = next((ci for ci, cfgkey in field_cols.items() if cfgkey == "_boxname"), None)
+            if boxname_col is None:
+                boxname_col = next((ci for ci in span if _norm_hdr(headers[ci]) == "name"), None)
+            
+            box_name = ""
+            if boxname_col is not None:
+                for row in data_rows:
+                    val = row[boxname_col].strip() if boxname_col < len(row) else ""
+                    if val:
+                        box_name = val
+                        break
+            if not box_name and "id" in group_cfg:
+                box_name = f"Box {group_cfg['id']}"
+            if not box_name:
+                box_name = f"Group {suffix + 1}"
+            
+            # Build items list
+            items = []
+            for row in data_rows:
+                item_id = ""
+                item_name = ""
+                
+                # Check contents_col
+                if contents_col is not None:
+                    v_contents = row[contents_col].strip() if contents_col < len(row) else ""
+                    if not v_contents:
+                        continue
+                    parsed_cid = _parse_id_val(v_contents)
+                    if parsed_cid:
+                        item_id = parsed_cid
+                        if contentsname_col is not None:
+                            item_name = row[contentsname_col].strip() if contentsname_col < len(row) else ""
+                    else:
+                        item_name = v_contents
+                        if id_col is not None:
+                            item_id = _parse_id_val(row[id_col])
+                else:
+                    if id_col is not None:
+                        item_id = _parse_id_val(row[id_col])
+                    if boxname_col is not None:
+                        item_name = row[boxname_col].strip() if boxname_col < len(row) else ""
+                
+                if not item_id and not item_name:
+                    continue
+                
+                # Rate
+                rate = None
+                for ci in rate_cols:
+                    v = row[ci].strip() if ci < len(row) else ""
+                    try:
+                        rate = int(float(v.replace("%","").strip()))
+                        break
+                    except:
+                        pass
+                
+                # ItemCnt
+                item_cnt = 1
+                if itemcnt_col is not None:
+                    v = row[itemcnt_col].strip() if itemcnt_col < len(row) else ""
+                    try:
+                        item_cnt = int(float(v))
+                    except:
+                        pass
+                
+                # Per-item bonus IDs
+                item_bonus_pick = ""
+                item_bonus_unpick = ""
+                if bonus_pick_col is not None:
+                    item_bonus_pick = row[bonus_pick_col].strip() if bonus_pick_col < len(row) else ""
+                if bonus_unpick_col is not None:
+                    item_bonus_unpick = row[bonus_unpick_col].strip() if bonus_unpick_col < len(row) else ""
+                
+                item_dict = {"id": item_id, "name": item_name,
+                             "extra": [], "rate": rate, "item_cnt": item_cnt}
+                if item_bonus_pick:   item_dict["bonus_pick_id"]   = item_bonus_pick
+                if item_bonus_unpick: item_dict["bonus_unpick_id"] = item_bonus_unpick
+                items.append(item_dict)
+            
+            # Apply indexed slot bonus columns
+            for slot_n, ci in bonus_pick_slot_cols.items():
+                for row in data_rows:
+                    v = row[ci].strip() if ci < len(row) else ""
+                    if v:
+                        if slot_n < len(items): items[slot_n]["bonus_pick_id"] = v
+                        break
+            for slot_n, ci in bonus_unpick_slot_cols.items():
+                for row in data_rows:
+                    v = row[ci].strip() if ci < len(row) else ""
+                    if v:
+                        if slot_n < len(items): items[slot_n]["bonus_unpick_id"] = v
+                        break
+            
+            if items:
+                results.append({"box_name": box_name,
+                                "items": items,
+                                "cfg_override": group_cfg})
+        return results
+
+    # ── TALL FORMAT DETECTION ──
+    # If no box-name columns (e.g. headers are all recognized fields like ID, Name, FileName),
+    # treat each row as a separate Box group (Tall format).
+    if not box_col_indices:
+        id_col = next((i for i, h in enumerate(hnorms) if h in ("id", "boxid")), None)
+        name_col = next((i for i, h in enumerate(hnorms) if h in ("name", "boxname", "box")), None)
+        contents_col = next((i for i, h in enumerate(hnorms) if h in ("contents", "content")), None)
+        
+        # Build field_cols mapping
+        field_cols = {}
+        for ci, hn in enumerate(hnorms):
+            if hn in _HDR_TO_CFGKEY:
+                field_cols[ci] = _HDR_TO_CFGKEY[hn]
+            elif hn == "boxname" or hn == "box":
+                field_cols[ci] = "_boxname"
+
+        for row_idx, row in enumerate(data_rows):
+            group_cfg = {}
+            for ci, cfgkey in field_cols.items():
+                val = row[ci].strip() if ci < len(row) else ""
+                if val:
+                    _apply_field_col(group_cfg, cfgkey, val)
+                    
+            # Basic box identity
+            box_name = ""
+            if name_col is not None:
+                box_name = row[name_col].strip() if name_col < len(row) else ""
+            if not box_name and id_col is not None:
+                box_name = f"Box {_parse_id_val(row[id_col]) if id_col < len(row) else (row_idx+1)}"
+            if not box_name:
+                box_name = f"Row {row_idx+1}"
+
+            # If there's an ID column, ensure it's in cfg_override
+            if id_col is not None:
+                val = row[id_col].strip() if id_col < len(row) else ""
+                parsed_bid = _parse_id_val(val)
+                if parsed_bid:
+                    group_cfg["id"] = parsed_bid
+
+            # Parse contents into items if present
+            items = []
+            if contents_col is not None:
+                contents = row[contents_col].strip() if contents_col < len(row) else ""
+                if contents:
+                    for item_name in contents.split("/"):
+                        if item_name.strip():
+                            items.append({"id": "", "name": item_name.strip(), "extra": [], "rate": None, "item_cnt": 1})
+
+            results.append({
+                "box_name": box_name,
+                "items": items,
+                "cfg_override": group_cfg
+            })
+        return results
+
+    # ── WIDE FORMAT PARSING ──
     prev_end = -1
     # Compute next box-col for each group (to know where trailing fields end)
     next_box_cols = box_col_indices[1:] + [len(headers)]
@@ -645,7 +992,8 @@ def parse_grouped_csv(text):
         trailing = [ci for ci in range(bc + 1, next_bc)
                     if _norm_hdr(headers[ci]) in _TRAILING_OK]
         span = list(range(prev_end + 1, bc + 1)) + trailing
-        prev_end = bc
+        # FIX: The next group's core span should not include this group's trailing columns.
+        prev_end = trailing[-1] if trailing else bc
 
         box_name_hdr = headers[bc]   # the column header = box name for the group
 
@@ -653,13 +1001,26 @@ def parse_grouped_csv(text):
         id_col       = None   # item ID column index (per-item)
         box_id_col   = None   # box's own ID column index
         contents_col = None   # alternate item-name column
+        contentsname_col = None
         rate_cols    = []     # numeric rate columns
         itemcnt_col  = None
         field_cols   = {}     # col_index -> cfg_key (field overrides)
+        # Per-item bonus columns
+        bonus_pick_col   = None          # PickBonusPresentId   (per item row)
+        bonus_unpick_col = None          # UnpickBonusPresentId (per item row)
+        bonus_pick_slot_cols   = {}      # slot_N -> col_index
+        bonus_unpick_slot_cols = {}      # slot_N -> col_index
 
         for ci in span:
             if ci == bc: continue   # box-name col itself
             hn = hnorms[ci]
+            # Indexed bonus columns: pickbonuspresentid_0 / unpickbonuspresentid_1 etc.
+            _m_pick   = re.match(r'^pickbonuspresentid(\d+)$', hn)
+            _m_unpick = re.match(r'^unpickbonuspresentid(\d+)$', hn)
+            if _m_pick:
+                bonus_pick_slot_cols[int(_m_pick.group(1))] = ci; continue
+            if _m_unpick:
+                bonus_unpick_slot_cols[int(_m_unpick.group(1))] = ci; continue
             if hn == "id":
                 # Bare "ID" column always means item ID, regardless of skip lists
                 if id_col is None: id_col = ci
@@ -671,6 +1032,15 @@ def parse_grouped_csv(text):
                     if id_col is None: id_col = ci
                 elif cfgkey == "_contents":
                     contents_col = ci
+                elif cfgkey == "_contentsname":
+                    contentsname_col = ci
+                elif cfgkey == "bonus_pick_id":
+                    # Treat as BOTH box-level (first non-empty) AND per-item column
+                    bonus_pick_col = ci
+                    field_cols[ci] = cfgkey
+                elif cfgkey == "bonus_unpick_id":
+                    bonus_unpick_col = ci
+                    field_cols[ci] = cfgkey
                 else:
                     field_cols[ci] = cfgkey
             elif hn in ("itemcnt", "count"):
@@ -693,8 +1063,9 @@ def parse_grouped_csv(text):
         if box_id_col is not None:
             for row in data_rows:
                 val = row[box_id_col].strip() if box_id_col < len(row) else ""
-                if val.isdigit():
-                    group_cfg["id"] = val
+                parsed_bid = _parse_id_val(val)
+                if parsed_bid:
+                    group_cfg["id"] = parsed_bid
                     break
 
         # Build items list
@@ -708,45 +1079,83 @@ def parse_grouped_csv(text):
                 # DropID mode: items come from DropID column; box name from bc col or boxname_col
                 raw_name = row[dropid_col].strip() if dropid_col < len(row) else ""
                 if not raw_name: continue
-                item_id   = raw_name if raw_name.isdigit() else ""
+                item_id   = _parse_id_val(raw_name)
                 item_name = ""
                 if boxname_col is not None:
                     item_name = row[boxname_col].strip() if boxname_col < len(row) else ""
             else:
                 # Normal mode
-                # Item ID — prefer id_col; fall back to first digit in box-name col
                 item_id = ""
-                if id_col is not None:
-                    v = row[id_col].strip() if id_col < len(row) else ""
-                    if v.isdigit(): item_id = v
-                # Item name — from contents_col, or box-name col
-                # If id_col gave us an ID, the box-name col text is descriptive (skip it)
-                raw_name = row[bc].strip() if bc < len(row) else ""
+                item_name = ""
+                
+                # Check contents_col
                 if contents_col is not None:
-                    item_name = row[contents_col].strip() if contents_col < len(row) else raw_name
-                elif id_col is not None:
-                    # ID-based format: name col not present, use raw_name only if non-numeric
-                    item_name = "" if raw_name.isdigit() else raw_name
+                    v_contents = row[contents_col].strip() if contents_col < len(row) else ""
+                    if v_contents:
+                        parsed_cid = _parse_id_val(v_contents)
+                        if parsed_cid:
+                            item_id = parsed_cid
+                            if contentsname_col is not None:
+                                item_name = row[contentsname_col].strip() if contentsname_col < len(row) else ""
+                        else:
+                            item_name = v_contents
+                            if id_col is not None:
+                                item_id = _parse_id_val(row[id_col])
                 else:
-                    item_name = raw_name
+                    if id_col is not None:
+                        item_id = _parse_id_val(row[id_col])
+                    # Item name — from contents_col, or box-name col
+                    raw_name = row[bc].strip() if bc < len(row) else ""
+                    if id_col is not None:
+                        # ID-based format: name col not present, use raw_name only if non-numeric
+                        item_name = "" if _parse_id_val(raw_name) else raw_name
+                    else:
+                        item_name = raw_name
+
                 if not item_id and not item_name: continue
 
             # Rate: first parseable integer from rate_cols
             rate = None
             for ci in rate_cols:
                 v = row[ci].strip() if ci < len(row) else ""
-                try: rate = int(v.replace("%","").strip()); break
+                try: rate = int(float(v.replace("%","").strip())); break
                 except: pass
 
             # ItemCnt
             item_cnt = 1
             if itemcnt_col is not None:
                 v = row[itemcnt_col].strip() if itemcnt_col < len(row) else ""
-                try: item_cnt = int(v)
+                try: item_cnt = int(float(v))
                 except: pass
 
-            items.append({"id": item_id, "name": item_name,
-                          "extra": [], "rate": rate, "item_cnt": item_cnt})
+            # Per-item bonus IDs from per-row columns
+            item_bonus_pick = ""
+            item_bonus_unpick = ""
+            if bonus_pick_col is not None:
+                item_bonus_pick = row[bonus_pick_col].strip() if bonus_pick_col < len(row) else ""
+            if bonus_unpick_col is not None:
+                item_bonus_unpick = row[bonus_unpick_col].strip() if bonus_unpick_col < len(row) else ""
+
+            item_dict = {"id": item_id, "name": item_name,
+                         "extra": [], "rate": rate, "item_cnt": item_cnt}
+            if item_bonus_pick:   item_dict["bonus_pick_id"]   = item_bonus_pick
+            if item_bonus_unpick: item_dict["bonus_unpick_id"] = item_bonus_unpick
+            items.append(item_dict)
+
+        # Apply indexed slot bonus columns (PickBonusPresentId_N) to items by index
+        for slot_n, ci in bonus_pick_slot_cols.items():
+            # Read value from any data row (these columns typically sit in the box header row)
+            for row in data_rows:
+                v = row[ci].strip() if ci < len(row) else ""
+                if v:
+                    if slot_n < len(items): items[slot_n]["bonus_pick_id"] = v
+                    break
+        for slot_n, ci in bonus_unpick_slot_cols.items():
+            for row in data_rows:
+                v = row[ci].strip() if ci < len(row) else ""
+                if v:
+                    if slot_n < len(items): items[slot_n]["bonus_unpick_id"] = v
+                    break
 
         if items:
             results.append({"box_name": box_name_hdr,
@@ -776,8 +1185,12 @@ def build_options_str(check_states, recycle_val):
     return "/".join(str(x) for x in sorted(set(base+checked+rec)))
 
 def build_itemparam_row(cfg):
+    ncash_val = cfg.get("ncash_direct")
+    if ncash_val is None:
+        ncash_val = cfg.get("ncash", 0)
     opts      = build_options_str(cfg["opt_checks"], cfg["opt_recycle"])
-    chr_flags = sum(cfg["chr_type_flags"])
+    _chr_list = cfg["chr_type_flags"]
+    chr_flags = "/".join(str(v) for v in _chr_list) if _chr_list else "0"
     fn        = cfg["file_name"]
     bn        = cfg["bundle_num"]
     return f"""<ROW>
@@ -843,7 +1256,7 @@ def build_itemparam_row(cfg):
 <ChrFTypeFlag>0</ChrFTypeFlag>
 <ChrGender>0</ChrGender>
 <ExistType>0</ExistType>
-<Ncash>{cfg['ncash']}</Ncash>
+<Ncash>{ncash_val}</Ncash>
 <NewCM>0</NewCM>
 <FamCM>0</FamCM>
 <Summary><![CDATA[ ]]></Summary>
@@ -851,8 +1264,8 @@ def build_itemparam_row(cfg):
 <ShopBundleNum>0</ShopBundleNum>
 <MinStatType>0</MinStatType>
 <MinStatLv>0</MinStatLv>
-<RefineIndex>0</RefineIndex>
-<RefineType>0</RefineType>
+<RefineIndex>{cfg.get('refine_index', 0)}</RefineIndex>
+<RefineType>{cfg.get('refine_type', 0)}</RefineType>
 <CompoundSlot>0</CompoundSlot>
 <SetItemID>0</SetItemID>
 <ReformCount>0</ReformCount>
@@ -890,6 +1303,69 @@ def build_presentparam_row(box_id, items, ptype, drop_cnt, default_rate,
 
 def build_recycle_except_row(box_id, name):
     return f"<ROW>\n<ItemID>{box_id}</ItemID>\n<Comment><![CDATA[{name}]]></Comment>\n</ROW>"
+
+def build_bonus_present_rows(box_id, items, pick_id, unpick_id,
+                              bonus_mode="standardized", box_name=None):
+    """Build BonusPresentItemInfo <ROW> entries.
+
+    For each item in the box:
+      <PresentId>    = box_id  (PresentItemParam2 box ID, with optional <!-- box_name -->)
+      <SelectItemId> = item ID (with optional <!-- item name -->)
+      <PickBonusPresentId>   = reward pool A ID
+      <UnpickBonusPresentId> = reward pool B ID
+
+    Per-item override: if item dict contains 'bonus_pick_id' / 'bonus_unpick_id',
+    those are used regardless of bonus_mode.  This is set by:
+      - PickBonusPresentId   column value on that item's CSV row
+      - PickBonusPresentId_N indexed column (slot N)
+
+    bonus_mode (fallback when no per-item override):
+      'standardized' — all items share the same pick_id / unpick_id
+      'manual'       — base IDs increment +1 per item row
+    """
+    rows = []
+    try:
+        base_pick   = int(pick_id)   if pick_id   else None
+        base_unpick = int(unpick_id) if unpick_id else None
+    except (ValueError, TypeError):
+        base_pick = base_unpick = None
+
+    for i, item in enumerate(items):
+        item_id = str(item.get("id", "")).strip()
+        if not item_id or not item_id.isdigit() or item_id == "0":
+            continue
+        item_name = str(item.get("name", "")).strip()
+
+        # Per-item override takes priority
+        try:    cur_pick   = int(item["bonus_pick_id"])
+        except: cur_pick   = None
+        try:    cur_unpick = int(item["bonus_unpick_id"])
+        except: cur_unpick = None
+
+        # Fall back to box-level (standardized or manual)
+        if cur_pick is None:
+            if base_pick is None: continue   # no source at all — skip row
+            cur_pick = base_pick if bonus_mode == "standardized" else base_pick + i
+        if cur_unpick is None:
+            if base_unpick is None: continue
+            cur_unpick = base_unpick if bonus_mode == "standardized" else base_unpick + i
+
+        present_line = f"<PresentId>{box_id}</PresentId>"
+        if box_name:
+            present_line += f" <!-- {box_name} -->"
+        select_line = f"<SelectItemId>{item_id}</SelectItemId>"
+        if item_name:
+            select_line += f" <!-- {item_name} -->"
+
+        rows.append("\n".join([
+            "<ROW>",
+            present_line,
+            select_line,
+            f"<PickBonusPresentId>{cur_pick}</PickBonusPresentId>",
+            f"<UnpickBonusPresentId>{cur_unpick}</UnpickBonusPresentId>",
+            "</ROW>",
+        ]))
+    return rows
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SHARED — BoxRateAdjuster XML helpers
@@ -974,7 +1450,7 @@ def parse_box_csv_groups(text):
     rows = list(reader)
     if not rows: return []
     headers = [h.strip() for h in rows[0]]
-    data_rows = rows[1:]
+    data_rows = [r for r in rows[1:] if any(cell.strip() for cell in r)]
 
     def _norm(h): return _re.sub(r"[^a-z0-9]","",h.lower())
 
@@ -1073,7 +1549,7 @@ def parse_csv_text_t3(text):
     all_rows = list(csv.reader(io.StringIO(stripped)))
     if not all_rows: return []
     raw_headers = [h.strip() for h in all_rows[0]]
-    data_rows   = all_rows[1:]
+    data_rows   = [r for r in all_rows[1:] if any(cell.strip() for cell in r)]
     items = []
     item_col_positions = [i for i,h in enumerate(raw_headers) if re.match(r'Item\d+_ID',h,re.I)]
     if item_col_positions:
@@ -1161,7 +1637,7 @@ def parse_parentbox_csv(text):
     all_rows = list(csv.reader(io.StringIO(stripped)))
     if not all_rows: return []
     raw_headers = [h.strip() for h in all_rows[0]]
-    data_rows   = all_rows[1:]
+    data_rows   = [r for r in all_rows[1:] if any(cell.strip() for cell in r)]
     id_positions = [i for i,h in enumerate(raw_headers) if h.lower()=="id"]
     val_map, box_tick_map = {}, {}
     for id_pos in id_positions:
@@ -2022,6 +2498,10 @@ class BoxXMLGenerator(tk.Frame):
                 "      NCash / Tickets             — pricing (Tickets × 133 = NCash)\n"
                 "      Options / ChrTypeFlags / Recycle / BoxID\n"
                 "      Contents / Comment / Use\n"
+                "      PickBonusPresentId          — Bonus Item pool A box ID\n"
+                "      UnpickBonusPresentId        — Bonus Item pool B box ID\n"
+                "      BonusMode                   — standardized | manual (default: standardized)\n"
+                "      BonusItems                  — 1/true to enable bonus rows for this group\n"
                 "  • \"Contents\" column: item names/IDs that go inside the box.\n"
                 "  • Wide format: each non-keyword header = one box group.\n"
                 "    e.g.  ID | Level | Dragon Box  |  ID | Level | Sheep Box  | …\n"
@@ -2086,6 +2566,19 @@ class BoxXMLGenerator(tk.Frame):
                         ["11001", "1", "50", "", "12001", "1", "60", ""],
                         ["11002", "1", "30", "", "12002", "1", "40", ""],
                         ["11003", "1", "20", "", "0",     "1", "0",  ""],
+                    ]
+                ),
+                (
+                    "Bonus Items — BonusPresentItemInfo columns",
+                    ["BoxID", "ID", "Rate", "BonusItems", "PickBonusPresentId",
+                     "UnpickBonusPresentId", "BonusMode", "Dragon Box"],
+                    [
+                        # BoxID row: box settings
+                        ["432062", "", "", "1", "431833", "431834", "standardized", ""],
+                        # Item rows
+                        ["", "72043", "50", "", "", "", "", ""],
+                        ["", "71965", "30", "", "", "", "", ""],
+                        ["", "11003",  "20", "", "", "", "", ""],
                     ]
                 ),
             ]
@@ -2272,8 +2765,15 @@ class BoxXMLGenerator(tk.Frame):
         opt_check_vars=[tk.BooleanVar(value=ov_checks[i] if i<len(ov_checks) else False) for i in range(8)]
         opt_recycle_var=tk.IntVar(value=ov_recycle)
         chr_selected=list(ov_chr)
-        present_type_var=tk.IntVar(value=s.get("present_type",0))
-        drop_cnt_var=tk.StringVar(value=s.get("drop_cnt","1"))
+        v_ptype_val = cfg_ov.get("present_type") or s.get("present_type", 1)
+        try:
+            ptype_int = int(float(str(v_ptype_val).strip()))
+            if ptype_int not in (1, 2): ptype_int = 1
+        except:
+            ptype_int = 1
+        present_type_var=tk.IntVar(value=ptype_int)
+        v_drop_cnt_val = cfg_ov.get("drop_cnt") or s.get("drop_cnt", "1")
+        drop_cnt_var=tk.StringVar(value=str(v_drop_cnt_val))
         default_rate_var=tk.StringVar(value=s.get("default_rate","50"))
         v_weight=tk.StringVar(value=cfg_ov.get("weight") or s.get("weight","1"))
         v_value=tk.StringVar(value=cfg_ov.get("value") or s.get("value","0"))
@@ -2447,13 +2947,165 @@ class BoxXMLGenerator(tk.Frame):
         tk.Label(icnt_univ_frm,text="ItemCnt (all):",bg=BG,fg=FG,font=("Consolas",9)).pack(side="left")
         tk.Entry(icnt_univ_frm,textvariable=item_cnt_univ_var,width=6,bg=BG3,fg=FG,
                  insertbackground=FG,font=("Consolas",9),relief="flat").pack(side="left",padx=6)
+        _bonus_rebuild_hook    = [None]   # set to _rebuild_bonus_manual_table after bonus UI
+        item_bonus_pick_vars   = []   # per-item StringVar for PickBonusPresentId
+        item_bonus_unpick_vars = []   # per-item StringVar for UnpickBonusPresentId
+
+        # ── Bonus Items (BonusPresentItemInfo) ──────────────────────────────
+        _s_bonus = self.saved_settings or {}
+        bonus_sec = mk_section(container, "  Bonus Items  (BonusPresentItemInfo)  ")
+        bonus_hdr = tk.Frame(bonus_sec, bg=BG); bonus_hdr.pack(fill="x", padx=8, pady=4)
+        bonus_enabled_var = tk.BooleanVar(
+            value=bool(cfg_ov.get("bonus_enabled", _s_bonus.get("bonus_enabled", False))))
+
+        def _toggle_bonus_body(*_):
+            if bonus_enabled_var.get():
+                bonus_body.pack(fill="x", padx=8, pady=2)
+                _toggle_bonus_mode()
+            else:
+                bonus_body.pack_forget()
+
+        tk.Checkbutton(bonus_hdr, text="Generate BonusPresentItemInfo rows for this box",
+                       variable=bonus_enabled_var, bg=BG, fg=FG, selectcolor=BG3,
+                       activebackground=BG, font=("Consolas",9),
+                       command=_toggle_bonus_body).pack(side="left")
+
+        bonus_body = tk.Frame(bonus_sec, bg=BG)
+
+        # Mode radios
+        bmode_frm = tk.Frame(bonus_body, bg=BG); bmode_frm.pack(anchor="w", pady=(4,2))
+        tk.Label(bmode_frm, text="Mode:", bg=BG, fg=FG, font=("Consolas",9)).pack(side="left")
+        _saved_bmode = cfg_ov.get("bonus_mode", _s_bonus.get("bonus_mode", "standardized"))
+        bonus_mode_var = tk.StringVar(value=_saved_bmode)
+
+        _std_tip = (
+            "Standardized — all items in the box share the same two bonus IDs.\n\n"
+            "Generates one <ROW> per item:\n"
+            "  <PresentId>            = this box's ID\n"
+            "  <SelectItemId>         = each item's ID in turn\n"
+            "  <PickBonusPresentId>   = same Pool A box ID for every item\n"
+            "  <UnpickBonusPresentId> = same Pool B box ID for every item\n\n"
+            "Enter the two shared box IDs in the fields below."
+        )
+        _man_tip = (
+            "Manual — each item gets its own unique bonus box ID pair.\n\n"
+            "Generates one <ROW> per item:\n"
+            "  <PresentId>            = this box's ID\n"
+            "  <SelectItemId>         = each item's ID in turn\n"
+            "  <PickBonusPresentId>   = unique Pool A ID for THAT item\n"
+            "  <UnpickBonusPresentId> = unique Pool B ID for THAT item\n\n"
+            "A per-item table appears below — enter each item's Pick and Unpick IDs there.\n"
+            "CSV: use PickBonusPresentId_0, _1, _2… or a per-row PickBonusPresentId column."
+        )
+
+        rb_std = tk.Radiobutton(bmode_frm,
+            text="Standardized  (two shared bonus IDs for all items)",
+            variable=bonus_mode_var, value="standardized",
+            bg=BG, fg=FG, selectcolor=BG3, activebackground=BG, font=("Consolas",9))
+        rb_std.pack(side="left", padx=6)
+        rb_man = tk.Radiobutton(bmode_frm,
+            text="Manual  (unique Pick/Unpick IDs per item)",
+            variable=bonus_mode_var, value="manual",
+            bg=BG, fg=FG, selectcolor=BG3, activebackground=BG, font=("Consolas",9))
+        rb_man.pack(side="left", padx=6)
+        if _APP_SETTINGS.get("tooltips_enabled", True):
+            _attach_tooltip(rb_std, _std_tip); _attach_tooltip(rb_man, _man_tip)
+
+        # Shared Pick/Unpick vars (used by standardized; also serve as defaults for manual)
+        _def_pick   = cfg_ov.get("bonus_pick_id",   _s_bonus.get("bonus_pick_id",   ""))
+        _def_unpick = cfg_ov.get("bonus_unpick_id", _s_bonus.get("bonus_unpick_id", ""))
+        bonus_pick_var   = tk.StringVar(value=str(_def_pick)   if _def_pick   else "")
+        bonus_unpick_var = tk.StringVar(value=str(_def_unpick) if _def_unpick else "")
+
+        # ── Standardized sub-frame: two shared entry fields ──────────────────
+        bonus_std_frame = tk.Frame(bonus_body, bg=BG)
+        def _srow(parent, lbl, var, tip=""):
+            r = tk.Frame(parent, bg=BG); r.pack(fill="x", pady=2)
+            lw = tk.Label(r, text=lbl, width=28, anchor="w", bg=BG, fg=FG, font=("Consolas",9))
+            lw.pack(side="left")
+            ent = tk.Entry(r, textvariable=var, width=14, bg=BG3, fg=FG,
+                           insertbackground=FG, font=("Consolas",9), relief="flat")
+            ent.pack(side="left", padx=4)
+            if tip and _APP_SETTINGS.get("tooltips_enabled", True):
+                _attach_tooltip(lw, tip); _attach_tooltip(ent, tip)
+        _srow(bonus_std_frame, "PickBonusPresentId (Pool A):", bonus_pick_var,
+              "Reward Box A ID — every item uses this same Pool A box.\nMUST be a Box ID, not a raw item ID.")
+        _srow(bonus_std_frame, "UnpickBonusPresentId (Pool B):", bonus_unpick_var,
+              "Reward Box B ID — every item uses this same Pool B box.\nMUST be a Box ID, not a raw item ID.")
+
+        # ── Manual sub-frame: per-item table ─────────────────────────────────
+        bonus_manual_frame = tk.Frame(bonus_body, bg=BG)
+
+        def _rebuild_bonus_manual_table():
+            for w in bonus_manual_frame.winfo_children(): w.destroy()
+            has_names = any(it.get("name","").strip() for it in live_items)
+            hcols = [("#",3), ("SelectItemId",12)]
+            if has_names: hcols.append(("Name",28))
+            hcols += [("PickBonusPresentId",15), ("UnpickBonusPresentId",15)]
+            for ci,(txt,w) in enumerate(hcols):
+                tk.Label(bonus_manual_frame, text=txt, width=w, bg=BG2, fg=BLUE,
+                         font=("Consolas",9,"bold"), anchor="w").grid(
+                         row=0, column=ci, padx=2, pady=2, sticky="w")
+            for i, item in enumerate(live_items):
+                bg2 = BG if i%2==0 else BG2; col=0
+                tk.Label(bonus_manual_frame, text=str(i), width=3, bg=bg2, fg=FG_GREY,
+                         font=("Consolas",9)).grid(row=i+1, column=col, padx=2, pady=1); col+=1
+                tk.Label(bonus_manual_frame, text=item.get("id",""), width=12, bg=bg2, fg=FG,
+                         font=("Consolas",9), anchor="w").grid(row=i+1, column=col, padx=2); col+=1
+                if has_names:
+                    tk.Label(bonus_manual_frame, text=item.get("name","")[:30], width=28,
+                             bg=bg2, fg=FG_DIM, font=("Consolas",9),
+                             anchor="w").grid(row=i+1, column=col, padx=2, sticky="w"); col+=1
+                if i < len(item_bonus_pick_vars):
+                    tk.Entry(bonus_manual_frame, textvariable=item_bonus_pick_vars[i],
+                             width=15, bg=BG3, fg=FG, insertbackground=FG,
+                             font=("Consolas",9), relief="flat").grid(row=i+1, column=col, padx=2); col+=1
+                if i < len(item_bonus_unpick_vars):
+                    tk.Entry(bonus_manual_frame, textvariable=item_bonus_unpick_vars[i],
+                             width=15, bg=BG3, fg=FG, insertbackground=FG,
+                             font=("Consolas",9), relief="flat").grid(row=i+1, column=col, padx=2)
+
+        _bonus_rebuild_hook[0] = _rebuild_bonus_manual_table
+
+        def _toggle_bonus_mode(*_):
+            if bonus_mode_var.get() == "standardized":
+                bonus_manual_frame.pack_forget()
+                bonus_std_frame.pack(anchor="w", pady=2)
+            else:
+                bonus_std_frame.pack_forget()
+                bonus_manual_frame.pack(fill="x", padx=4, pady=2)
+                _rebuild_bonus_manual_table()
+
+        rb_std.config(command=_toggle_bonus_mode)
+        rb_man.config(command=_toggle_bonus_mode)
+
+        # Warning always visible when body is shown
+        tk.Label(bonus_body,
+                 text="⚠  PickBonusPresentId and UnpickBonusPresentId MUST be Box IDs (ItemParam boxes), NOT raw item IDs.",
+                 bg=BG, fg=ACC3, font=("Consolas",8,"bold"), justify="left").pack(
+                 anchor="w", padx=4, pady=(8,2))
+
+        # Initial sub-frame + body visibility
+        _toggle_bonus_mode()
+        if bonus_enabled_var.get(): bonus_body.pack(fill="x", padx=8, pady=2)
 
         def _rebuild_items_table():
             nonlocal rate_entry_widgets, icnt_entry_widgets
+            nonlocal item_bonus_pick_vars, item_bonus_unpick_vars
             while len(item_rate_vars)<len(live_items): item_rate_vars.append(tk.StringVar(value=default_rate_var.get() or "50"))
             while len(item_rate_vars)>len(live_items): item_rate_vars.pop()
             while len(item_cnt_vars)<len(live_items): item_cnt_vars.append(tk.StringVar(value="1"))
             while len(item_cnt_vars)>len(live_items): item_cnt_vars.pop()
+            # Sync per-item bonus vars
+            while len(item_bonus_pick_vars)<len(live_items):
+                it = live_items[len(item_bonus_pick_vars)]
+                item_bonus_pick_vars.append(tk.StringVar(value=str(it.get("bonus_pick_id",""))))
+            while len(item_bonus_pick_vars)>len(live_items): item_bonus_pick_vars.pop()
+            while len(item_bonus_unpick_vars)<len(live_items):
+                it = live_items[len(item_bonus_unpick_vars)]
+                item_bonus_unpick_vars.append(tk.StringVar(value=str(it.get("bonus_unpick_id",""))))
+            while len(item_bonus_unpick_vars)>len(live_items): item_bonus_unpick_vars.pop()
+
             for w in items_outer.winfo_children(): w.destroy()
             rate_entry_widgets=[]; icnt_entry_widgets=[]
             sec_items.config(text=f"  Box Contents ({len(live_items)} items)  ")
@@ -2474,11 +3126,15 @@ class BoxXMLGenerator(tk.Frame):
                     id_var=tk.StringVar(value=item.get("id",""))
                     tk.Entry(items_outer,textvariable=id_var,width=9,bg=BG3,fg=FG,
                              insertbackground=FG,font=("Consolas",9),relief="flat").grid(row=i+1,column=col,padx=2)
-                    id_var.trace_add("write",lambda *_,v=id_var,it=item: it.update({"id":v.get()}))
+                    id_var.trace_add("write",lambda *_,v=id_var,it=item: [
+                        it.update({"id":v.get()}),
+                        _bonus_rebuild_hook[0]() if _bonus_rebuild_hook[0] else None])
                     name_var=tk.StringVar(value=item.get("name",""))
                     tk.Entry(items_outer,textvariable=name_var,width=40,bg=BG3,fg=FG,
                              insertbackground=FG,font=("Consolas",9),relief="flat").grid(row=i+1,column=col+1,padx=2,sticky="w")
-                    name_var.trace_add("write",lambda *_,v=name_var,it=item: it.update({"name":v.get()}))
+                    name_var.trace_add("write",lambda *_,v=name_var,it=item: [
+                        it.update({"name":v.get()}),
+                        _bonus_rebuild_hook[0]() if _bonus_rebuild_hook[0] else None])
                 else:
                     tk.Label(items_outer,text=item.get("id",""),width=9,bg=bg,fg=FG,
                              font=("Consolas",9)).grid(row=i+1,column=col,padx=2)
@@ -2499,6 +3155,8 @@ class BoxXMLGenerator(tk.Frame):
                             live_items.pop(idx)
                             if idx<len(item_rate_vars): item_rate_vars.pop(idx)
                             if idx<len(item_cnt_vars): item_cnt_vars.pop(idx)
+                            if idx<len(item_bonus_pick_vars):   item_bonus_pick_vars.pop(idx)
+                            if idx<len(item_bonus_unpick_vars): item_bonus_unpick_vars.pop(idx)
                             _rebuild_items_table()
                         return _rem
                     tk.Button(items_outer,text="−",width=2,command=make_remove(i),
@@ -2512,6 +3170,7 @@ class BoxXMLGenerator(tk.Frame):
                           bg=GREEN,fg=BG2,font=("Consolas",9),relief="flat",padx=6,pady=2
                           ).grid(row=len(live_items)+1,column=0,columnspan=6,sticky="w",padx=4,pady=4)
             _toggle_rate_mode_inner()
+            if _bonus_rebuild_hook[0]: _bonus_rebuild_hook[0]()
 
         # ItemCnt mode radios — placed here so _rebuild_items_table is already defined
         icnt_mode_frm=tk.Frame(sp,bg=BG); icnt_mode_frm.pack(anchor="w",padx=8,pady=(4,2))
@@ -2541,6 +3200,7 @@ class BoxXMLGenerator(tk.Frame):
         _rebuild_items_table()
         present_type_var.trace_add("write",toggle_drop_fields)
         _toggle_dc_mode(); toggle_drop_fields(); _toggle_rate_mode()
+
 
         # ── MyShop Generation ────────────────────────────────────────────────
         _s_myshop = self.saved_settings or {}
@@ -2650,24 +3310,43 @@ class BoxXMLGenerator(tk.Frame):
                 for iv in item_cnt_vars:
                     try: item_cnts.append(int(iv.get()) or 1)
                     except: item_cnts.append(1)
+            # Bonus Items — merge per-item StringVars back into item dicts
+            bonus_items_out = []
+            for j, it in enumerate(live_items):
+                it2 = dict(it)
+                if j < len(item_bonus_pick_vars):
+                    v = item_bonus_pick_vars[j].get().strip()
+                    if v: it2["bonus_pick_id"] = v
+                    else: it2.pop("bonus_pick_id", None)
+                if j < len(item_bonus_unpick_vars):
+                    v = item_bonus_unpick_vars[j].get().strip()
+                    if v: it2["bonus_unpick_id"] = v
+                    else: it2.pop("bonus_unpick_id", None)
+                bonus_items_out.append(it2)
             return {
                 "id":v_id.get().strip(),"name":v_name.get(),
                 "name_template":v_name.get(),"comment":v_comment.get(),
                 "comment_template":v_comment.get(),"use":v_use.get(),
                 "use_template":v_use.get(),"box_name":box_name,
-                "items":list(live_items),"item_rates":item_rates,"item_cnts":item_cnts,
+                "items":bonus_items_out,"item_rates":item_rates,"item_cnts":item_cnts,
                 "item_cnt_mode":icnt_mode,"item_cnt_univ":item_cnt_univ_var.get() or "1",
                 "file_name":v_file_name.get(),"bundle_num":v_bundle_num.get() or "0",
                 "cmt_file_name":v_cmt_file_name.get(),"cmt_bundle_num":v_cmt_bundle.get() or "0",
                 "weight":v_weight.get() or "1","value":v_value.get() or "0",
                 "min_level":v_min_level.get() or "1","money":v_money.get() or "0",
                 "ncash":ncash,"ticket":v_ticket.get() or "0",
+                "ncash_direct":cfg_ov.get("ncash_direct"),
                 "opt_checks":[bv.get() for bv in opt_check_vars],
                 "opt_recycle":opt_recycle_var.get(),"chr_type_flags":list(chr_selected),
                 "present_type":present_type_var.get(),
                 "drop_cnt":drop_cnt_var.get() or "1" if dc_mode_var.get()=="manual" else str(len(live_items)),
                 "default_rate":default_rate_var.get() or "50",
                 "dc_mode":dc_mode_var.get(),"rate_mode":rate_mode_var.get(),
+                # Bonus Items
+                "bonus_enabled":  bonus_enabled_var.get(),
+                "bonus_mode":     bonus_mode_var.get(),
+                "bonus_pick_id":  bonus_pick_var.get().strip(),
+                "bonus_unpick_id":bonus_unpick_var.get().strip(),
                 "myshop_enabled":     myshop_var.get(),
                 "myshop_price":       myshop_price_var.get().strip() or "0",
                 "myshop_cat":         myshop_cat_var.get(),
@@ -2837,9 +3516,20 @@ class BoxXMLGenerator(tk.Frame):
                               "cmt_file_name", "cmt_bundle_num",
                               "weight", "value", "min_level", "money",
                               "ticket", "opt_checks", "opt_recycle",
-                              "chr_type_flags", "ncash_direct"):
+                              "chr_type_flags", "ncash_direct",
+                              "bonus_pick_id", "bonus_unpick_id",
+                              "bonus_mode", "bonus_enabled"):
                 if field_key in cfg_ov:
                     cfg[field_key] = cfg_ov[field_key]
+
+            if "ticket" in cfg_ov:
+                try: cfg["ncash"] = round(float(cfg["ticket"])*133)
+                except: cfg["ncash"] = 0
+
+            # Bonus IDs: in standardized mode keep them fixed;
+            # in manual mode advance the base by the group offset (already
+            # handled per-item inside build_bonus_present_rows, so just carry
+            # the same base values — the row builder does the +i offset).
 
             # ── Items / rates / counts ─────────────────────────────────────
             cfg["box_name"]=grp["box_name"]; cfg["items"]=grp["items"]
@@ -2873,6 +3563,7 @@ class BoxXMLGenerator(tk.Frame):
         nb=ttk.Notebook(nb_host); nb.pack(fill="both",expand=True,padx=8,pady=4)
 
         itemparam_rows=[]; presentparam_rows=[]; recycle_except_rows=[]
+        bonus_present_rows=[]   # BonusPresentItemInfo rows
         include_present = {}   # cfg["id"] -> bool
 
         for cfg in self.box_configs:
@@ -2891,6 +3582,16 @@ class BoxXMLGenerator(tk.Frame):
             include_present[cfg["id"]] = True
             if cfg.get("opt_recycle",0) in (0,8388608):
                 recycle_except_rows.append(build_recycle_except_row(cfg["id"],cfg["name"]))
+            # BonusPresentItemInfo
+            if cfg.get("bonus_enabled") and cfg.get("bonus_pick_id") and cfg.get("bonus_unpick_id"):
+                bonus_present_rows.extend(
+                    build_bonus_present_rows(
+                        cfg["id"], cfg["items"],
+                        cfg["bonus_pick_id"], cfg["bonus_unpick_id"],
+                        bonus_mode=cfg.get("bonus_mode", "standardized"),
+                        box_name=cfg.get("name", "")
+                    )
+                )
 
         csv_lines=["ID,BoxName"]+[f"{c['id']},{c['box_name']}" for c in self.box_configs]
         csv_text="\n".join(csv_lines)
@@ -2915,6 +3616,12 @@ class BoxXMLGenerator(tk.Frame):
         if recycle_except_rows:
             _exports.append(("RecycleExceptItem_rows.xml","\n".join(recycle_except_rows)))
             make_output_tab(nb,"RecycleExceptItem.xml rows","\n".join(recycle_except_rows),"RecycleExceptItem_rows.xml",self.root)
+
+        if bonus_present_rows:
+            _bonus_xml = "\n".join(bonus_present_rows)
+            _exports.append(("BonusPresentItemInfo_rows.xml", _bonus_xml))
+            make_output_tab(nb, "BonusPresentItemInfo", _bonus_xml,
+                            "BonusPresentItemInfo_rows.xml", self.root)
 
         # ── MyShop outputs (libcmgds_e + SQL) ───────────────────────────────────
         _myshop_xml_blocks, _myshop_sql_rows, _myshop_final_glc = _build_box_myshop_outputs(self.box_configs)
@@ -4847,6 +5554,45 @@ def _parse_effect_val(raw):
     if len(vals) == 1: return vals[0]
     return "/".join(str(v) for v in vals)
 
+def is_pet_item(cfg):
+    """Check if the item represents a Pet (Type 13 or Use 114)."""
+    t_val = str(cfg.get("type_val", "")).strip().lower()
+    u_val = str(cfg.get("use", "")).strip().lower()
+    t_digits = "".join(c for c in t_val if c.isdigit())
+    u_digits = "".join(c for c in u_val if c.isdigit())
+    if t_digits == "13" or u_digits == "114" or "pet" in t_val or "pet" in u_val:
+        return True
+    return False
+
+def build_characterinfo_row(cfg):
+    """Build a <ROW> for CharacterInfo.xml from a pet item param config."""
+    def _cd(v): return f"<![CDATA[{v}]]>"
+    equip_fn = cfg.get("equip_file_name", "").strip()
+    if not equip_fn:
+        equip_fn = " "
+    lines = [
+        "<ROW>",
+        f"<ID>{cfg['id']}</ID>",
+        f"<CommonName>{_cd(cfg.get('name', 'Insert_pet_name_here'))}</CommonName>",
+        f"<CommonName_Eng>{_cd(' ')}</CommonName_Eng>",
+        f"<FileName>{_cd(equip_fn)}</FileName>",
+        f"<PartName>{_cd(' ')}</PartName>",
+        f"<IllustName>{_cd(' ')}</IllustName>",
+        f"<WalkSpeed>0.000000</WalkSpeed>",
+        f"<SizeOnStop>0</SizeOnStop>",
+        f"<SizeOnMove>0</SizeOnMove>",
+        f"<RunSpeed>0.000000</RunSpeed>",
+        f"<MinAtkRange>0</MinAtkRange>",
+        f"<MaxAtkRange>0</MaxAtkRange>",
+        f"<ChaseRange>0</ChaseRange>",
+        f"<PivotFileName>{_cd(' ')}</PivotFileName>",
+        f"<TransRate>0</TransRate>",
+        f"<HideShadow>0</HideShadow>",
+        f"<DrawScale>0</DrawScale>",
+        "</ROW>"
+    ]
+    return "\n".join(lines)
+
 def build_generic_itemparam_row(cfg):
     """Build a full ItemParam <ROW> from a cfg dict."""
     def _cd(v):  return f"<![CDATA[{v}]]>"
@@ -4857,10 +5603,14 @@ def build_generic_itemparam_row(cfg):
         try:    return int(v)
         except: return default
 
-    # Options bitmask from list of checked flags
-    opts_val = 0
-    for flag, checked in zip([f for f,_ in _OPTIONS_FULL], cfg.get("options_flags", [])):
-        if checked: opts_val |= flag
+    # Options — slash-separated (stored as "1/16" or "0")
+    _opts_raw = str(cfg.get("options_raw_manual", "0")).strip()
+    if _opts_raw.lstrip("-").isdigit():
+        _opts_int = int(_opts_raw)
+        _opts_flags = [str(f) for f,_ in _OPTIONS_FULL if f > 0 and (_opts_int & f)]
+        opts_val = "/".join(_opts_flags) if _opts_flags else "0"
+    else:
+        opts_val = _opts_raw if _opts_raw else "0"
     # OptionsEx — slash-separated (stored as "16/32" or "0")
     _optex_raw = str(cfg.get("options_ex", 0)).strip()
     # If it's a plain integer (legacy), decompose it into flags
@@ -4871,6 +5621,24 @@ def build_generic_itemparam_row(cfg):
     else:
         # Already slash-separated — pass through as-is
         optex_val = _optex_raw if _optex_raw else "0"
+        
+    # HideHat — slash-separated
+    _hidehat_raw = str(cfg.get("hide_hat", 0)).strip()
+    if _hidehat_raw.lstrip("-").isdigit():
+        _hidehat_int = int(_hidehat_raw)
+        _hidehat_flags = [str(v) for v in sorted(CHR_FLAG_MAP.values()) if _hidehat_int & v]
+        hidehat_val = "/".join(_hidehat_flags) if _hidehat_flags else "0"
+    else:
+        hidehat_val = _hidehat_raw if _hidehat_raw else "0"
+
+    # ChrTypeFlags — slash-separated
+    _chrtype_raw = str(cfg.get("chr_type_flags", 0)).strip()
+    if _chrtype_raw.lstrip("-").isdigit():
+        _chrtype_int = int(_chrtype_raw)
+        _chrtype_flags = [str(v) for v in sorted(CHR_FLAG_MAP.values()) if _chrtype_int & v]
+        chrtype_val = "/".join(_chrtype_flags) if _chrtype_flags else "0"
+    else:
+        chrtype_val = _chrtype_raw if _chrtype_raw else "0"
 
     lines = [
         "<ROW>",
@@ -4880,22 +5648,22 @@ def build_generic_itemparam_row(cfg):
         f"<SubType>{cfg.get('subtype_val','0')}</SubType>",
         f"<ItemFType>{cfg.get('itemftype_val','0')}</ItemFType>",
         f"<Name>{_cd(cfg.get('name',''))}</Name>",
-        f"<Comment>{_cd(cfg.get('comment',''))}</Comment>",
-        f"<Use>{_cd(cfg.get('use',''))}</Use>",
-        f"<Name_Eng>{_cd(cfg.get('name_eng',' '))}</Name_Eng>",
-        f"<Comment_Eng>{_cd(cfg.get('comment_eng',' '))}</Comment_Eng>",
+        f"<Comment>{_cd(cfg.get('comment','').strip() or ' ')}</Comment>",
+        f"<Use>{_cd(cfg.get('use','').strip() or ' ')}</Use>",
+        f"<Name_Eng>{_cd(cfg.get('name_eng','').strip() or ' ')}</Name_Eng>",
+        f"<Comment_Eng>{_cd(cfg.get('comment_eng','').strip() or ' ')}</Comment_Eng>",
         f"<FileName>{_cd(cfg.get('file_name',''))}</FileName>",
         f"<BundleNum>{_int(cfg.get('bundle_num',0))}</BundleNum>",
         f"<InvFileName>{_cd(cfg.get('file_name',''))}</InvFileName>",
         f"<InvBundleNum>{_int(cfg.get('bundle_num',0))}</InvBundleNum>",
-        f"<CmtFileName>{_cd(cfg.get('cmt_file_name',''))}</CmtFileName>",
+        f"<CmtFileName>{_cd(cfg.get('cmt_file_name','').strip() or ' ')}</CmtFileName>",
         f"<CmtBundleNum>{_int(cfg.get('cmt_bundle_num',0))}</CmtBundleNum>",
-        f"<EquipFileName>{_cd(cfg.get('equip_file_name',''))}</EquipFileName>",
+        f"<EquipFileName>{_cd(' ' if is_pet_item(cfg) or not cfg.get('equip_file_name','').strip() else cfg.get('equip_file_name',''))}</EquipFileName>",
         f"<PivotID>{_int(cfg.get('pivot_id',0))}</PivotID>",
         f"<PaletteId>{_int(cfg.get('palette_id',0))}</PaletteId>",
         f"<Options>{opts_val}</Options>",
-        f"<HideHat>{_int(cfg.get('hide_hat',0))}</HideHat>",
-        f"<ChrTypeFlags>{_int(cfg.get('chr_type_flags',0))}</ChrTypeFlags>",
+        f"<HideHat>{hidehat_val}</HideHat>",
+        f"<ChrTypeFlags>{chrtype_val}</ChrTypeFlags>",
         f"<GroundFlags>{_int(cfg.get('ground_flags',0))}</GroundFlags>",
         f"<SystemFlags>{_int(cfg.get('system_flags',0))}</SystemFlags>",
         f"<OptionsEx>{optex_val}</OptionsEx>",
@@ -4932,15 +5700,15 @@ def build_generic_itemparam_row(cfg):
         f"<CardGenGrade>{_int(cfg.get('cardgengrade',0))}</CardGenGrade>",
         f"<CardGenParam>{_fmt6(cfg.get('cardgenparam',0))}</CardGenParam>",
         f"<DailyGenCnt>{_int(cfg.get('dailygencnt',0))}</DailyGenCnt>",
-        f"<PartFileName>{_cd(cfg.get('part_file_name',' '))}</PartFileName>",
+        f"<PartFileName>{_cd(cfg.get('part_file_name','').strip() or ' ')}</PartFileName>",
         f"<ChrFTypeFlag>{_int(cfg.get('chr_ftype_flag',0))}</ChrFTypeFlag>",
         f"<ChrGender>{_int(cfg.get('chr_gender',0))}</ChrGender>",
         f"<ExistType>{_int(cfg.get('exist_type',0))}</ExistType>",
         f"<Ncash>{_int(cfg.get('ncash',0))}</Ncash>",
         f"<NewCM>{_int(cfg.get('new_cm',0))}</NewCM>",
         f"<FamCM>{_int(cfg.get('fam_cm',0))}</FamCM>",
-        f"<Summary>{_cd(cfg.get('summary',' '))}</Summary>",
-        f"<ShopFileName>{_cd(cfg.get('shop_file_name',' '))}</ShopFileName>",
+        f"<Summary>{_cd(cfg.get('summary','').strip() or ' ')}</Summary>",
+        f"<ShopFileName>{_cd(cfg.get('shop_file_name','').strip() or ' ')}</ShopFileName>",
         f"<ShopBundleNum>{_int(cfg.get('shop_bundle_num',0))}</ShopBundleNum>",
         f"<MinStatType>{_int(cfg.get('min_stat_type',0))}</MinStatType>",
         f"<MinStatLv>{_int(cfg.get('min_stat_lv',0))}</MinStatLv>",
@@ -4976,7 +5744,7 @@ def build_compound_row(cfg):
     lines = ["<ROW>",
         f"<CompoundID>{_i(cfg.get('compound_id',0))}</CompoundID>",
         f"<Name>{_cd(cfg.get('name',''))}</Name>",
-        f"<Comment>{_cd(cfg.get('comment',''))}</Comment>",
+        f"<Comment>{_cd(cfg.get('comment','').strip() or ' ')}</Comment>",
         f"<ResLv>{_i(cfg.get('res_lv',1))}</ResLv>",
     ]
     for n in range(1,4):
@@ -5008,7 +5776,7 @@ def build_exchange_row(cfg):
     lines = ["<ROW>",
         f"<ExchangeID>{_i(cfg.get('exchange_id',0))}</ExchangeID>",
         f"<Name>{_cd(cfg.get('name',''))}</Name>",
-        f"<Comment>{_cd(cfg.get('comment',''))}</Comment>",
+        f"<Comment>{_cd(cfg.get('comment','').strip() or ' ')}</Comment>",
         f"<ResLv>{_i(cfg.get('res_lv',1))}</ResLv>",
     ]
     for n in range(1,4):
@@ -6136,7 +6904,7 @@ def _parse_ce_grouped_csv(text, mode):
     rows   = list(reader)
     if not rows: return []
     headers  = [h.strip() for h in rows[0]]
-    data_rows = rows[1:]
+    data_rows = [r for r in rows[1:] if any(cell.strip() for cell in r)]
 
     def _norm(h): return re.sub(r'[\s_]+', '', str(h).lower().strip())
 
@@ -6161,10 +6929,10 @@ def _parse_ce_grouped_csv(text, mode):
 
     for bi, gc in enumerate(group_col_indices):
         group_name = headers[gc]
-        span_indices = list(range(prev_end + 1, gc + 1)) + \
-                       [ci for ci in range(gc + 1, next_group_cols[bi])
+        trailing = [ci for ci in range(gc + 1, next_group_cols[bi])
                         if _norm(headers[ci]) in known]
-        prev_end = gc
+        span_indices = list(range(prev_end + 1, gc + 1)) + trailing
+        prev_end = trailing[-1] if trailing else gc
 
         cfgs = []
         for raw_row in data_rows:
@@ -7419,6 +8187,40 @@ class ItemParamGenerator(tk.Frame):
     """ItemParam Generator — builds full <ROW> entries for any item type."""
 
     ACC = "#94e2d5"   # teal — tool 6
+    _ALIAS = {
+        "id":"id","itemid":"id","class":"class_val","type":"type_val",
+        "subtype":"subtype_val","itemftype":"itemftype_val",
+        "name":"name","comment":"comment","use":"use",
+        "nameeng":"name_eng","commenteng":"comment_eng",
+        "filename":"file_name","bundlenum":"bundle_num",
+        "fn":"file_name","bn":"bundle_num",
+        "cmtfilename":"cmt_file_name","cmtbundlenum":"cmt_bundle_num",
+        "cmtfn":"cmt_file_name","cmtbn":"cmt_bundle_num",
+        "equipfilename":"equip_file_name",
+        "shopfilename":"shop_file_name","shopbundlenum":"shop_bundle_num",
+        "partfilename":"part_file_name",
+        "pivotid":"pivot_id","paletteid":"palette_id","groupid":"group_id",
+        "options":"options_raw_manual","optionsex":"options_ex",
+        "effect":"effect","existtype":"exist_type",
+        "weight":"weight","value":"value","minlevel":"min_level",
+        "money":"money","ncash":"ncash",
+        "hidehat":"hide_hat","chrtypeflags":"chr_type_flags",
+        "groundflags":"ground_flags","systemflags":"system_flags",
+        "ap":"ap","hp":"hp","hpcon":"hpcon","mp":"mp","mpcon":"mpcon",
+        "applus":"applus","acplus":"acplus","dxplus":"dxplus",
+        "maxmpplus":"maxmpplus","maplus":"maplus","mdplus":"mdplus",
+        "maxwtplus":"maxwtplus","daplus":"daplus","lkplus":"lkplus",
+        "maxhpplus":"maxhpplus","dpplus":"dpplus","hvplus":"hvplus",
+        "hprecoveryrate":"hprecoveryrate","mprecoveryrate":"mprecoveryrate",
+        "effectflags2":"effect_flags2","selrange":"sel_range",
+        "life":"life","depth":"depth","delay":"delay",
+        "cardnum":"cardnum","cardgengrade":"cardgengrade",
+        "cardgenparam":"cardgenparam","dailygencnt":"dailygencnt",
+        "refineindex":"refine_index","refinetype":"refine_type",
+        "minstattype":"min_stat_type","minstatlv":"min_stat_lv",
+        "compoundslot":"compound_slot","setitemid":"set_item_id",
+        "reformcount":"reform_count",
+    }
 
     def __init__(self, parent, root, session):
         super().__init__(parent, bg=BG)
@@ -7506,32 +8308,16 @@ class ItemParamGenerator(tk.Frame):
                 messagebox.showerror("Import Error", str(e)); return
             if not raw_rows:
                 messagebox.showwarning("Empty", "No data rows found."); return
-            _alias = {
-                "id":"id","itemid":"id","class":"class_val","type":"type_val",
-                "subtype":"subtype_val","itemftype":"itemftype_val",
-                "name":"name","comment":"comment","use":"use",
-                "nameeng":"name_eng","commenteng":"comment_eng",
-                "filename":"file_name","fn":"file_name",
-                "bundlenum":"bundle_num","bn":"bundle_num",
-                "cmtfilename":"cmt_file_name","cmtfn":"cmt_file_name",
-                "cmtbundlenum":"cmt_bundle_num","cmtbn":"cmt_bundle_num",
-                "equipfilename":"equip_file_name",
-                "shopfilename":"shop_file_name","shopbundlenum":"shop_bundle_num",
-                "partfilename":"part_file_name",
-                "pivotid":"pivot_id","paletteid":"palette_id","groupid":"group_id",
-                "options":"options_raw_manual","optionsex":"options_ex",
-                "effect":"effect","existtype":"exist_type",
-                "weight":"weight","value":"value","minlevel":"min_level",
-                "money":"money","ncash":"ncash",
-                "chrtypeflags":"chr_type_flags","hidehat":"hide_hat",
-            }
             import re as _re
             new_s = dict(self._settings)
             for col, val in raw_rows[0].items():
-                key = _alias.get(_re.sub(r"[^a-z0-9]", "", col.lower()))
+                key = self._ALIAS.get(_re.sub(r"[^a-z0-9]", "", col.lower()))
                 # Values: plain strip only — never strip . or \ from paths
                 if key and str(val).strip(): new_s[key] = str(val).strip()
             self._settings = new_s; _save_t6_settings(new_s)
+            self._pending_csv_rows = [r for r in raw_rows[1:] if any(str(v).strip() for v in r.values())]
+            self._batch_rows = []
+            self._batch_xmls = []
             if len(raw_rows) > 1:
                 messagebox.showinfo("Import",
                     f"Loaded row 1 of {len(raw_rows)}.\n"
@@ -7703,6 +8489,29 @@ class ItemParamGenerator(tk.Frame):
                 bg=BG4, fg=FG, font=("Consolas", 9), justify="left").pack(anchor="w", pady=(4, 0))
             mk_btn(wb, "Got it — dismiss", lambda: wb.destroy(),
                    color=BG3, font=("Consolas", 9)).pack(anchor="w", pady=(6, 0))
+
+        # Dropdown to load from batch history
+        batch_rows = getattr(self, "_batch_rows", [])
+        if batch_rows:
+            hist_frm = tk.Frame(C, bg=BG); hist_frm.pack(fill="x", padx=14, pady=(4, 8))
+            tk.Label(hist_frm, text="Edit previous entry:", bg=BG, fg=FG_DIM, font=("Consolas", 9)).pack(side="left")
+            disp_vals = [f"#{i+1}: ID {r.get('id', '')} — {r.get('name', '')}" for i, r in enumerate(batch_rows)]
+            v_hist_sel = tk.StringVar()
+            combo_hist = ttk.Combobox(hist_frm, textvariable=v_hist_sel, values=disp_vals, state="readonly", width=40, font=("Consolas", 9))
+            combo_hist.pack(side="left", padx=8)
+            def _load_hist(e):
+                sel_str = v_hist_sel.get()
+                try:
+                    idx_str = sel_str.split(":")[0].replace("#", "")
+                    idx = int(idx_str) - 1
+                    selected_cfg = dict(batch_rows[idx])
+                    self._batch_rows = batch_rows[:idx]
+                    self._batch_xmls = self._batch_xmls[:idx]
+                    self._settings = selected_cfg
+                    self._build_editor()
+                except Exception as ex:
+                    pass
+            combo_hist.bind("<<ComboboxSelected>>", _load_hist)
 
         # ── Mode toggle (Dropdown / Manual) ──────────────────────────────
         mode_var = tk.StringVar(value=s.get("input_mode", "dropdown"))
@@ -8005,20 +8814,23 @@ class ItemParamGenerator(tk.Frame):
             hh_lb_frm = tk.Frame(parent, bg=BG); hh_lb_frm.pack(fill="x", padx=8)
             hh_lb = tk.Listbox(hh_lb_frm, height=3, width=36, bg=BG3, fg=FG,
                                font=("Consolas", 9), selectbackground=BG4, activestyle="none")
-            hh_lb.pack(anchor="w")
-            r_hh = tk.Frame(parent, bg=BG); r_hh.pack(fill="x", padx=8, pady=(0,4))
-            tk.Label(r_hh, text="Raw value:", bg=BG, fg=FG_DIM,
-                     font=("Consolas", 9)).pack(side="left")
-            hh_raw_ent = tk.Entry(r_hh, textvariable=v_hide_hat, width=12,
-                                   bg=BG3, fg=FG, insertbackground=FG,
-                                   font=("Consolas", 9), relief="flat")
-            hh_raw_ent.pack(side="left", padx=6)
-            _attach_tooltip(hh_raw_ent, _TOOLTIPS["HideHat"])
+            hh_sb = tk.Scrollbar(hh_lb_frm, orient="vertical", command=hh_lb.yview)
+            hh_lb.config(yscrollcommand=hh_sb.set)
+            hh_lb.grid(row=0, column=0, sticky="w")
+            hh_sb.grid(row=0, column=1, sticky="ns")
+            hh_lb.bind("<MouseWheel>",
+                       lambda e: hh_lb.yview_scroll(int(-1*(e.delta/120)), "units"))
+            hh_preview = tk.Label(parent, text="Value: 0", bg=BG, fg=GREEN,
+                                   font=("Consolas", 9))
+            hh_preview.pack(anchor="w", padx=10, pady=(2, 4))
+            _attach_tooltip(hh_preview, _TOOLTIPS["HideHat"])
             hh_selected = []
             def _refresh_hh():
                 hh_lb.delete(0, "end")
                 for val in hh_selected: hh_lb.insert("end", CHR_FLAG_REVERSE.get(val, str(val)))
-                v_hide_hat.set(str(sum(hh_selected)))
+                raw = "/".join(str(v) for v in hh_selected) if hh_selected else "0"
+                v_hide_hat.set(raw)
+                hh_preview.config(text=f"Value: {raw}")
             def _add_hh():
                 name = hh_name_dd.get(); job = hh_job_dd.get()
                 if not name or not job: return
@@ -8028,10 +8840,17 @@ class ItemParamGenerator(tk.Frame):
                 sel = hh_lb.curselection()
                 if sel: hh_selected.pop(sel[0]); _refresh_hh()
             hh_add_btn.config(command=_add_hh); hh_rem_btn.config(command=_rem_hh)
-            try: saved_hh_int = int(s.get("hide_hat", 0))
-            except: saved_hh_int = 0
-            for v_hh in sorted(CHR_FLAG_MAP.values()):
-                if saved_hh_int & v_hh: hh_selected.append(v_hh)
+            saved_hh = str(s.get("hide_hat", 0)).strip()
+            if saved_hh.lstrip("-").isdigit():
+                saved_hh_int = int(saved_hh)
+                for v_hh in sorted(CHR_FLAG_MAP.values()):
+                    if saved_hh_int & v_hh: hh_selected.append(v_hh)
+            else:
+                for p in saved_hh.split("/"):
+                    try:
+                        v = int(p.strip())
+                        if v: hh_selected.append(v)
+                    except: pass
             _refresh_hh()
 
         def _build_chrtype_section(parent):
@@ -8056,20 +8875,23 @@ class ItemParamGenerator(tk.Frame):
             chr_lb_frm = tk.Frame(parent, bg=BG); chr_lb_frm.pack(fill="x", padx=8)
             chr_lb = tk.Listbox(chr_lb_frm, height=4, width=36, bg=BG3, fg=FG,
                                 font=("Consolas", 9), selectbackground=BG4, activestyle="none")
-            chr_lb.pack(anchor="w")
-            r_chr = tk.Frame(parent, bg=BG); r_chr.pack(fill="x", padx=8, pady=(0,4))
-            tk.Label(r_chr, text="Raw value:", bg=BG, fg=FG_DIM,
-                     font=("Consolas", 9)).pack(side="left")
-            chr_raw_ent = tk.Entry(r_chr, textvariable=v_chr_raw, width=12,
-                                    bg=BG3, fg=FG, insertbackground=FG,
-                                    font=("Consolas", 9), relief="flat")
-            chr_raw_ent.pack(side="left", padx=6)
-            _attach_tooltip(chr_raw_ent, _TOOLTIPS["ChrTypeFlags"])
+            chr_sb = tk.Scrollbar(chr_lb_frm, orient="vertical", command=chr_lb.yview)
+            chr_lb.config(yscrollcommand=chr_sb.set)
+            chr_lb.grid(row=0, column=0, sticky="w")
+            chr_sb.grid(row=0, column=1, sticky="ns")
+            chr_lb.bind("<MouseWheel>",
+                        lambda e: chr_lb.yview_scroll(int(-1*(e.delta/120)), "units"))
+            chr_preview = tk.Label(parent, text="Value: 0", bg=BG, fg=GREEN,
+                                    font=("Consolas", 9))
+            chr_preview.pack(anchor="w", padx=10, pady=(2, 4))
+            _attach_tooltip(chr_preview, _TOOLTIPS["ChrTypeFlags"])
             chr_selected6 = []
             def _refresh_chr6():
                 chr_lb.delete(0, "end")
                 for val in chr_selected6: chr_lb.insert("end", CHR_FLAG_REVERSE.get(val, str(val)))
-                v_chr_raw.set(str(sum(chr_selected6)))
+                raw = "/".join(str(v) for v in chr_selected6) if chr_selected6 else "0"
+                v_chr_raw.set(raw)
+                chr_preview.config(text=f"Value: {raw}")
             def _add_chr6():
                 name = chr_name_dd.get(); job = chr_job_dd.get()
                 if not name or not job: return
@@ -8079,10 +8901,17 @@ class ItemParamGenerator(tk.Frame):
                 sel = chr_lb.curselection()
                 if sel: chr_selected6.pop(sel[0]); _refresh_chr6()
             chr_add_btn.config(command=_add_chr6); chr_rem_btn.config(command=_rem_chr6)
-            try: saved_chr_int = int(s.get("chr_type_flags", 0))
-            except: saved_chr_int = 0
-            for v_c in sorted(CHR_FLAG_MAP.values()):
-                if saved_chr_int & v_c: chr_selected6.append(v_c)
+            saved_chr = str(s.get("chr_type_flags", 0)).strip()
+            if saved_chr.lstrip("-").isdigit():
+                saved_chr_int = int(saved_chr)
+                for v_c in sorted(CHR_FLAG_MAP.values()):
+                    if saved_chr_int & v_c: chr_selected6.append(v_c)
+            else:
+                for p in saved_chr.split("/"):
+                    try:
+                        v = int(p.strip())
+                        if v: chr_selected6.append(v)
+                    except: pass
             _refresh_chr6()
 
         def _build_numeric_stats(parent):
@@ -8207,11 +9036,6 @@ class ItemParamGenerator(tk.Frame):
             man_class_frm = tk.Frame(s1, bg=BG)
             man_type_frm  = tk.Frame(s1, bg=BG)
             man_sub_frm   = tk.Frame(s1, bg=BG)
-            man_ift_frm   = tk.Frame(s1, bg=BG)
-            _build_dd_row(dd_class_frm,  "Class: *",    _CLASS_MAP,    v_class,
-                          _TOOLTIPS["Class"]+"\n⚠ REQUIRED — must not be 0.")
-            _build_dd_row(dd_type_frm,   "Type: *",     _TYPE_MAP,     v_type,
-                          _TOOLTIPS["Type"]+"\n⚠ REQUIRED — must not be 0.")
             _build_dd_row(dd_sub_frm,    "SubType:",     _SUBTYPE_MAP,  v_sub,   _TOOLTIPS["SubType"])
             _build_dd_row(dd_ift_frm,    "ItemFType:",   _ITEMFTYPE_MAP,v_ift,   _TOOLTIPS["ItemFType"])
             _build_man_row(man_class_frm,"Class: *",     v_class, _TOOLTIPS["Class"]+"\n⚠ REQUIRED.")
@@ -8234,8 +9058,8 @@ class ItemParamGenerator(tk.Frame):
             lbl_note(s3, "  InvFileName / InvBundleNum are auto-copied from FileName / BundleNum.")
             lbl_entry(s3, "CmtFileName:",  v_cmtfn, 50, _TOOLTIPS["CmtFileName"])
             lbl_entry(s3, "CmtBundleNum:", v_cmtbn,  8, _TOOLTIPS["CmtBundleNum"])
-            lbl_entry(s3, "EquipFileName:", v_equipfn, 50, _TOOLTIPS["EquipFileName"])
-            lbl_note(s3, "  EquipFileName: leave blank if not equipment/drill.")
+            lbl_entry(s3, "EquipFileName:  !", v_equipfn, 50, "(When generating pets, this is the pet's NRI path and will be generated in characterinfo appropriately.)")
+            lbl_note(s3, "  EquipFileName: leave blank if not equipment/drill/pet.")
 
             # ── PivotID / PaletteId ──────────────────────────────────────
             s_piv = sec("  PivotID & PaletteId  (Default: 0)")
@@ -8355,7 +9179,7 @@ class ItemParamGenerator(tk.Frame):
             lbl_note(s3, "  InvFileName / InvBundleNum auto-copied.")
             lbl_entry(s3, "CmtFileName:",  v_cmtfn, 50, _TOOLTIPS["CmtFileName"])
             lbl_entry(s3, "CmtBundleNum:", v_cmtbn,  8, _TOOLTIPS["CmtBundleNum"])
-            lbl_entry(s3, "EquipFileName:", v_equipfn, 50, _TOOLTIPS["EquipFileName"])
+            lbl_entry(s3, "EquipFileName:  !", v_equipfn, 50, "(When generating pets, this is the pet's NRI path and will be generated in characterinfo appropriately.)")
 
             # ── Options ───────────────────────────────────────────────────
             s4 = sec("  Options  (eItemOption — slash-separated flags e.g. 1/2/256)")
@@ -8534,7 +9358,7 @@ class ItemParamGenerator(tk.Frame):
                 "options_raw_manual": v_opts_manual.get(),
                 "options_ex":    "/".join(str(f) for f,v in sorted(optex_vars.items()) if v.get()) or "0",
                 "hide_hat":      v_hide_hat.get(),
-                "chr_type_flags":int(v_chr_raw.get() or 0),
+                "chr_type_flags":v_chr_raw.get() or "0",
                 "ground_flags":  v_ground.get(),
                 "system_flags":  v_system.get(),
                 "exist_type":    v_exist_type.get(),
@@ -8598,7 +9422,30 @@ class ItemParamGenerator(tk.Frame):
             if cfg["type_val"] in ("", "0", "Unselected"):
                 if not messagebox.askyesno("Confirm", "Type is Unselected / 0. Continue?"):
                     return
+            
+            is_pet = is_pet_item(cfg)
             xml = build_generic_itemparam_row(cfg)
+            
+            characterinfo_xml = None
+            if is_pet:
+                characterinfo_xml = build_characterinfo_row(cfg)
+            
+            if getattr(self, "_batch_xmls", []):
+                self._batch_rows.append(cfg)
+                self._batch_xmls.append(xml)
+                
+                # Check for pets in batch
+                batch_chars = []
+                for b_cfg in self._batch_rows:
+                    if is_pet_item(b_cfg):
+                        batch_chars.append(build_characterinfo_row(b_cfg))
+                if batch_chars:
+                    characterinfo_xml = "\n".join(batch_chars)
+                
+                xml = "\n".join(self._batch_xmls)
+                self._batch_rows = []
+                self._batch_xmls = []
+            
             cfg["_first_run_done"] = True
             _save_t6_settings(cfg)
             try: _set_last_id("t6_item", int(cfg["id"]))
@@ -8619,21 +9466,58 @@ class ItemParamGenerator(tk.Frame):
                 if messagebox.askyesno("PresentItemParam2",
                         "This is a box (Type 15).\nGenerate a PresentItemParam2 row too?"):
                     present_xml = self._ask_present_contents(cfg)
-            self._show_output(xml, cfg, present_xml=present_xml)
+            self._show_output(xml, cfg, present_xml=present_xml, characterinfo_xml=characterinfo_xml)
 
         def _generate_and_next():
             cfg = _gather()
             if not cfg["id"].strip():
                 messagebox.showerror("Missing ID", "Please enter an Item ID."); return
             xml = build_generic_itemparam_row(cfg)
-            try:    cfg["id"] = str(int(cfg["id"]) + 1)
-            except: pass
-            cfg["_first_run_done"] = True
-            _save_t6_settings(cfg)
-            try: _set_last_id("t6_item", int(cfg["id"]) - 1)
-            except: pass
-            self._settings = cfg; self._first_run = False
-            self._show_output(xml, cfg, auto_next=True, present_xml=None)
+            
+            if not hasattr(self, "_batch_rows"): self._batch_rows = []
+            if not hasattr(self, "_batch_xmls"): self._batch_xmls = []
+            if not hasattr(self, "_batch_char_xmls"): self._batch_char_xmls = []
+            self._batch_rows.append(cfg)
+            self._batch_xmls.append(xml)
+            if is_pet_item(cfg):
+                self._batch_char_xmls.append(build_characterinfo_row(cfg))
+            
+            pending = getattr(self, "_pending_csv_rows", [])
+            if pending:
+                import re as _re
+                next_row = pending.pop(0)
+                for col, val in next_row.items():
+                    key = self._ALIAS.get(_re.sub(r"[^a-z0-9]", "", col.lower()))
+                    if key and str(val).strip():
+                        cfg[key] = str(val).strip()
+                # If no ID in this row, auto-increment
+                if not any(_re.sub(r"[^a-z0-9]", "", c.lower()) in ("id", "itemid") and str(v).strip() for c, v in next_row.items()):
+                    try: cfg["id"] = str(int(cfg["id"]) + 1)
+                    except: pass
+                cfg["_first_run_done"] = True
+                _save_t6_settings(cfg)
+                try: _set_last_id("t6_item", int(cfg["id"]) - 1)
+                except: pass
+                self._settings = cfg; self._first_run = False
+                
+                # Check for pet in this single row output
+                single_char = build_characterinfo_row(cfg) if is_pet_item(cfg) else None
+                self._show_output(xml, cfg, auto_next=True, present_xml=None, characterinfo_xml=single_char)
+            else:
+                combined_xml = "\n".join(self._batch_xmls)
+                combined_char = "\n".join(self._batch_char_xmls) if self._batch_char_xmls else None
+                self._batch_rows = []
+                self._batch_xmls = []
+                self._batch_char_xmls = []
+                try:    cfg["id"] = str(int(cfg["id"]) + 1)
+                except: pass
+                cfg["_first_run_done"] = True
+                _save_t6_settings(cfg)
+                try: _set_last_id("t6_item", int(cfg["id"]) - 1)
+                except: pass
+                self._settings = cfg; self._first_run = False
+                messagebox.showinfo("Done", "Processed all rows. Generating final XML.")
+                self._show_output(combined_xml, cfg, auto_next=False, present_xml=None, characterinfo_xml=combined_char)
 
         def _import_spreadsheet():
             """Import a single ItemParam row (or batch) from CSV/Excel."""
@@ -8659,45 +9543,19 @@ class ItemParamGenerator(tk.Frame):
             if not raw_rows:
                 messagebox.showwarning("Empty", "No data rows found."); return
             # Map first row to settings using a broad alias map
-            _alias = {
-                "id":"id","itemid":"id","class":"class_val","type":"type_val",
-                "subtype":"subtype_val","itemftype":"itemftype_val",
-                "name":"name","comment":"comment","use":"use",
-                "nameeng":"name_eng","commenteng":"comment_eng",
-                "filename":"file_name","bundlenum":"bundle_num",
-                "cmtfilename":"cmt_file_name","cmtbundlenum":"cmt_bundle_num",
-                "equipfilename":"equip_file_name",
-                "pivotid":"pivot_id","paletteid":"palette_id",
-                "options":"options_raw_manual","optionsex":"options_ex",
-                "hidehat":"hide_hat","chrtypeflags":"chr_type_flags",
-                "groundflags":"ground_flags","systemflags":"system_flags",
-                "existtype":"exist_type","weight":"weight","value":"value",
-                "minlevel":"min_level","money":"money","ncash":"ncash",
-                "ap":"ap","hp":"hp","hpcon":"hpcon","mp":"mp","mpcon":"mpcon",
-                "applus":"applus","acplus":"acplus","dxplus":"dxplus",
-                "maxmpplus":"maxmpplus","maplus":"maplus","mdplus":"mdplus",
-                "maxwtplus":"maxwtplus","daplus":"daplus","lkplus":"lkplus",
-                "maxhpplus":"maxhpplus","dpplus":"dpplus","hvplus":"hvplus",
-                "hprecoveryrate":"hprecoveryrate","mprecoveryrate":"mprecoveryrate",
-                "effect":"effect","effectflags2":"effect_flags2","selrange":"sel_range",
-                "life":"life","depth":"depth","delay":"delay",
-                "cardnum":"cardnum","cardgengrade":"cardgengrade",
-                "cardgenparam":"cardgenparam","dailygencnt":"dailygencnt",
-                "refineindex":"refine_index","refinetype":"refine_type",
-                "minstattype":"min_stat_type","minstatlv":"min_stat_lv",
-                "compoundslot":"compound_slot","setitemid":"set_item_id",
-                "reformcount":"reform_count","groupid":"group_id",
-                "shopfilename":"shop_file_name","shopbundlenum":"shop_bundle_num",
-                "partfilename":"part_file_name",
-            }
-            new_s = dict(self._settings)
+            import re as _re
+            current_ui_cfg = _gather()
+            new_s = dict(current_ui_cfg)
             row = raw_rows[0]
             for col, val in row.items():
-                key = _alias.get(re.sub(r"[^a-z0-9]", "", col.lower()))  # normalise HEADER only
+                key = self._ALIAS.get(_re.sub(r"[^a-z0-9]", "", col.lower()))  # normalise HEADER only
                 if key and str(val).strip():
                     new_s[key] = str(val).strip()  # value kept as-is — \\ and . preserved
             self._settings = new_s
             _save_t6_settings(new_s)
+            self._pending_csv_rows = [r for r in raw_rows[1:] if any(str(v).strip() for v in r.values())]
+            self._batch_rows = []
+            self._batch_xmls = []
             if len(raw_rows) > 1:
                 messagebox.showinfo("Import",
                     f"Loaded first row. File has {len(raw_rows)} rows total.\n"
@@ -8800,7 +9658,7 @@ class ItemParamGenerator(tk.Frame):
         return result[0]
 
     def _show_output(self, xml, cfg, auto_next=False,
-                     _compound_rows=None, _exchange_rows=None, present_xml=None):
+                     _compound_rows=None, _exchange_rows=None, present_xml=None, characterinfo_xml=None):
         self._clear()
         if _compound_rows is None: _compound_rows = []
         if _exchange_rows is None: _exchange_rows = []
@@ -8838,6 +9696,9 @@ class ItemParamGenerator(tk.Frame):
         if present_xml:
             make_output_tab(nb, "PresentItemParam2 row", present_xml,
                             "presentparam_row.xml", self.root)
+        if characterinfo_xml:
+            make_output_tab(nb, "CharacterInfo row", characterinfo_xml,
+                            "CharacterInfo.xml", self.root)
 
         # Compound/exchange extra tabs
         if _compound_rows:
@@ -8881,7 +9742,7 @@ class ItemParamGenerator(tk.Frame):
                         build_shop_row(c["id"], c.get("count","100"), c.get("price","0")))
                 self._extra_shop_rows_t6 = _shop_rows_t6
                 self._show_output(xml, cfg, _compound_rows=_compound_rows,
-                                  _exchange_rows=_exchange_rows)
+                                  _exchange_rows=_exchange_rows, characterinfo_xml=characterinfo_xml)
             _show_multi_ce_picker(self.root, items, _on_done)
 
         def _export_all():
@@ -8896,6 +9757,8 @@ class ItemParamGenerator(tk.Frame):
             exports = [("itemparam_row.xml", xml)]
             if present_xml:
                 exports.append(("presentparam_row.xml", present_xml))
+            if characterinfo_xml:
+                exports.append(("CharacterInfo.xml", characterinfo_xml))
             if _compound_rows:
                 exports += [("Compound_Potion_rows.xml", "\n".join(r[0] for r in _compound_rows)),
                             ("Compounder_Spot_rows.xml", "\n".join(r[1] for r in _compound_rows))]
@@ -9171,6 +10034,9 @@ class ItemParamGenerator(tk.Frame):
         if messagebox.askyesno("Reset", "Clear all fields and reset to defaults?"):
             _save_t6_settings({})
             self._settings = {}
+            self._batch_rows = []
+            self._batch_xmls = []
+            self._pending_csv_rows = []
             self._first_run = True
             self._build_start_screen()
 
@@ -9334,8 +10200,9 @@ def _update_rowcount_in_file(path):
                 new_text = new_text[:mc2.start(2)] + str(goods_count2) + new_text[mc2.end(2):]
                 results.append((old2, goods_count2))
 
-        with open(path, "w", encoding="utf-8", newline="") as f:
-            f.write(new_text)
+        if new_text != text:
+            with open(path, "w", encoding="utf-8", newline="") as f:
+                f.write(new_text)
 
         # Return combined summary as (char_old|mycamp_old, char_new|mycamp_new) tuple pairs
         if len(results) == 1:
@@ -9350,9 +10217,10 @@ def _update_rowcount_in_file(path):
     if not m:
         return None
     old = int(m.group(2))
-    new_text = pat.sub(lambda x: x.group(1) + str(count) + x.group(3), text, count=1)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(new_text)
+    if old != count:
+        new_text = pat.sub(lambda x: x.group(1) + str(count) + x.group(3), text, count=1)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(new_text)
     return old, count
 
 
@@ -9701,11 +10569,70 @@ class XMLComparator(tk.Frame):
         only_b = sorted(set(map_b) - set(map_a))
         both   = sorted(set(map_a) & set(map_b))
 
+        def _parse_row(row_str):
+            row_str = re.sub(r'^<ROW[^>]*>', '', row_str.strip(), flags=re.IGNORECASE)
+            row_str = re.sub(r'</ROW>$', '', row_str.strip(), flags=re.IGNORECASE)
+            d = {}
+            for m in re.finditer(r'<([A-Za-z_][A-Za-z0-9_]*?)[^>]*>(.*?)</\1>', row_str, re.DOTALL | re.IGNORECASE):
+                tag = m.group(1)
+                val = m.group(2)
+                cd = re.search(r'<!\[CDATA\[(.*?)\]\]>', val, re.DOTALL | re.IGNORECASE)
+                if cd:
+                    val = cd.group(1)
+                d[tag] = val.strip()
+            return d
+
         diff_rows = []
+        detailed_diffs = {}
         if self._deep_var.get():
             for k in both:
-                if map_a[k].strip() != map_b[k].strip():
+                row_a = map_a[k]
+                row_b = map_b[k]
+                if row_a.strip() != row_b.strip():
                     diff_rows.append(k)
+                    
+                    da = _parse_row(row_a)
+                    db = _parse_row(row_b)
+                    
+                    renames = []
+                    changes = []
+                    
+                    ka = list(da.keys())
+                    kb = list(db.keys())
+                    
+                    if len(ka) == len(kb):
+                        for a, b in zip(ka, kb):
+                            if a != b:
+                                renames.append((a, b))
+                                if da[a] != db[b]:
+                                    changes.append((b, da[a], db[b]))
+                            else:
+                                if da[a] != db[a]:
+                                    changes.append((a, da[a], db[a]))
+                    else:
+                        missing_in_b = [a for a in ka if a not in kb]
+                        missing_in_a = [b for b in kb if b not in ka]
+                        
+                        for a in list(missing_in_b):
+                            for b in list(missing_in_a):
+                                if a.lower() == b.lower():
+                                    renames.append((a, b))
+                                    if da[a] != db[b]:
+                                        changes.append((b, da[a], db[b]))
+                                    missing_in_b.remove(a)
+                                    missing_in_a.remove(b)
+                                    break
+                        
+                        for a in ka:
+                            if a in kb and da[a] != db[a]:
+                                changes.append((a, da[a], db[a]))
+                        
+                        for a in missing_in_b:
+                            changes.append((a, da[a], "(missing in B)"))
+                        for b in missing_in_a:
+                            changes.append((b, "(missing in A)", db[b]))
+                            
+                    detailed_diffs[k] = {"renames": renames, "changes": changes}
 
         lines = [
             "XML Comparison Report",
@@ -9714,14 +10641,65 @@ class XMLComparator(tk.Frame):
             f"Key field: <{key}>",
             f"Generated: {_time_mod.strftime('%Y-%m-%d %H:%M:%S')}",
             "=" * 60,
-            f"\nRows ONLY in A ({len(only_a)}):"]
-        lines += [f"  {k}" for k in only_a] or ["  (none)"]
-        lines += [f"\nRows ONLY in B ({len(only_b)}):"]
-        lines += [f"  {k}" for k in only_b] or ["  (none)"]
-        lines += [f"\nIn both: {len(both)}"]
+            "",
+            "1. MISSING IDs",
+            "============================================================",
+            f"{'ID':<15} | Missing In",
+            "-" * 60
+        ]
+        
+        missing = []
+        for k in only_a: missing.append((k, "File B (Only in A)"))
+        for k in only_b: missing.append((k, "File A (Only in B)"))
+        
+        if not missing:
+            lines.append("  (none)")
+        else:
+            for k, status in missing:
+                lines.append(f"{k:<15} | {status}")
+                
+        lines.append("")
+        
         if self._deep_var.get():
-            lines += [f"\nRows with DIFFERENT content ({len(diff_rows)}):"]
-            lines += [f"  {k}" for k in diff_rows] or ["  (none)"]
+            lines.extend([
+                "2. RENAMED PARAMETERS",
+                "============================================================",
+                f"{'ID':<15} | {'File A Parameter':<20} | File B Parameter",
+                "-" * 60
+            ])
+            has_renames = False
+            for k in diff_rows:
+                diff_info = detailed_diffs.get(k)
+                if diff_info and diff_info["renames"]:
+                    has_renames = True
+                    for a, b in diff_info["renames"]:
+                        lines.append(f"{k:<15} | {a:<20} | {b}")
+            if not has_renames:
+                lines.append("  (none)")
+                
+            lines.append("")
+            
+            lines.extend([
+                "3. VALUE CHANGES",
+                "============================================================",
+                f"{'ID':<15} | {'Parameter':<20} | {'File A Value':<15} | File B Value",
+                "-" * 60
+            ])
+            has_changes = False
+            for k in diff_rows:
+                diff_info = detailed_diffs.get(k)
+                if diff_info and diff_info["changes"]:
+                    has_changes = True
+                    for p, va, vb in diff_info["changes"]:
+                        va_str = str(va).replace('\n', '\\n').replace('\r', '')
+                        vb_str = str(vb).replace('\n', '\\n').replace('\r', '')
+                        lines.append(f"{k:<15} | {p:<20} | {va_str:<15} | {vb_str}")
+            if not has_changes:
+                lines.append("  (none)")
+                
+            lines.append("")
+            
+        lines.append(f"Summary: In both files: {len(both)}")
 
         # CSV lookup
         if self._csv_path:
@@ -10397,42 +11375,90 @@ class MassVarManip(tk.Frame):
         self._tags = _detect_row_tags(p)
         n = _count_rows_in_file(p)
         self._status.set(f"✓  {os.path.basename(p)}  ({n:,} rows)")
+        
+        current_tgt = self._tgt_var.get()
         self._tgt_menu["values"] = self._tags
-        if self._tags: self._tgt_menu.set(self._tags[0])
+        if self._tags:
+            if current_tgt in self._tags:
+                self._tgt_var.set(current_tgt)
+            else:
+                self._tgt_var.set(self._tags[0])
+                
         self._refresh_menus()
 
     def _matches_conds(self, row_text):
+        tag_conds = {}
         for cen, ct, op_box, cv in self._cond_rows:
             if not cen.get(): continue
             tag = ct.get().strip()
             cval = cv.get().strip()
-            if not tag or not cval: continue
-            row_val = (_xml_tag_val(row_text, tag) or "").strip()
             op = op_box.get()
+            if not tag or not cval: continue
+            if tag not in tag_conds: tag_conds[tag] = []
+            tag_conds[tag].append((op, cval))
             
-            # Smart CSV detection
-            if cval.lower().endswith(".csv") and os.path.exists(cval):
-                if op == "==" or op == "contains": op = "in CSV"
-                elif op == "!=" or op == "not contains": op = "not in CSV"
-            if op == "==":
-                if row_val != cval: return False
-            elif op == "!=":
-                if row_val == cval: return False
-            elif op == "contains":
-                if cval.lower() not in row_val.lower(): return False
-            elif op == "not contains":
-                if cval.lower() in row_val.lower(): return False
-            elif op == "in CSV":
-                cache_key = (cval, tag)
-                if cache_key not in getattr(self, '_csv_cache', {}) or row_val not in self._csv_cache[cache_key]: return False
-            elif op == "not in CSV":
-                cache_key = (cval, tag)
-                if cache_key in getattr(self, '_csv_cache', {}) and row_val in self._csv_cache[cache_key]: return False
-            elif op in (">","<",">=","<="):
-                try:
-                    a,b = float(row_val), float(cval)
-                    if not eval(f"{a}{op}{b}"): return False
-                except: return False
+        for tag, conds in tag_conds.items():
+            row_val = (_xml_tag_val(row_text, tag) or "").strip()
+            
+            groups = []
+            curr = []
+            for op, cval in conds:
+                if cval.lower().endswith(".csv") and os.path.exists(cval):
+                    if op == "==" or op == "contains": op = "in CSV"
+                    elif op == "!=" or op == "not contains": op = "not in CSV"
+
+                is_lower = op in (">", ">=")
+                is_upper = op in ("<", "<=")
+                is_eq = op == "=="
+                
+                if is_lower and any(o in (">", ">=") for o, _ in curr):
+                    groups.append(curr)
+                    curr = []
+                elif is_upper and any(o in ("<", "<=") for o, _ in curr):
+                    groups.append(curr)
+                    curr = []
+                elif is_eq and any(o == "==" for o, _ in curr):
+                    groups.append(curr)
+                    curr = []
+                    
+                curr.append((op, cval))
+            if curr:
+                groups.append(curr)
+                
+            tag_matched = False
+            for grp in groups:
+                grp_matched = True
+                for op, cval in grp:
+                    if op == "==":
+                        if row_val != cval: grp_matched = False; break
+                    elif op == "!=":
+                        if row_val == cval: grp_matched = False; break
+                    elif op == "contains":
+                        if cval.lower() not in row_val.lower(): grp_matched = False; break
+                    elif op == "not contains":
+                        if cval.lower() in row_val.lower(): grp_matched = False; break
+                    elif op == "in CSV":
+                        cache_key = (cval, tag)
+                        if cache_key not in getattr(self, '_csv_cache', {}) or row_val not in self._csv_cache[cache_key]: 
+                            grp_matched = False; break
+                    elif op == "not in CSV":
+                        cache_key = (cval, tag)
+                        if cache_key in getattr(self, '_csv_cache', {}) and row_val in self._csv_cache[cache_key]: 
+                            grp_matched = False; break
+                    elif op in (">","<",">=","<="):
+                        try:
+                            a,b = float(row_val), float(cval)
+                            if not eval(f"{a}{op}{b}"): grp_matched = False; break
+                        except: 
+                            grp_matched = False; break
+                
+                if grp_matched:
+                    tag_matched = True
+                    break
+                    
+            if not tag_matched:
+                return False
+                
         return True
 
     def _apply_op(self, old_val):
@@ -11021,6 +12047,7 @@ _TABLE_INFO_IDS = {
     "itemparam2":           ("'", "1602"),   # default; ItemParamCM2 variant handled separately
     "itemparamcm2":         ('"', "1751"),
     "presentitemparam2":    ('"', "1884"),
+    "bonuspresentiteminfo": ("'", "0"),      # single-quote table; TableInfoID needs manual verification
 }
 
 # Tables that use double-quotes for TABLE-level attributes (name, RowCount, FieldCnt)
@@ -12404,9 +13431,728 @@ class ToolNCashCombined(tk.Frame):
         self._sub = sub
 
 
+
+
+# ====== BonusPresentItemInfo Generator helpers + class ======
+import re
+import csv as _csv_mod
+
+
+# â”€â”€ CSV parser â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+def _norm_bonus_hdr(h):
+    return re.sub(r"[^a-z0-9]", "", h.strip().lower())
+
+
+def _parse_bonus_present_csv(path):
+    """Parse a bonus CSV into list of BonusGroup dicts.
+
+    BonusGroup = {
+        "present_id": str,
+        "mode": "standardized" | "manual",
+        "pick_id": str,
+        "unpick_id": str,
+        "items": [{"select_id": str, "pick_id": str|None, "unpick_id": str|None}]
+    }
+
+    Supports:
+    A) Direct: PresentId, SelectItemId, PickBonusPresentId, UnpickBonusPresentId, Mode
+    B) Box CSV (wide/tall): reuses parse_grouped_csv → _box_grps_to_bonus_groups
+    C) Parent Box (vertical list): Parent Box | Pick | Unpick | Mode
+       (SelectItemIds populated from XML lookup later)
+    Also detects PickBonusPresentId_N and PickBonusPresentId N slot columns.
+    """
+    try:
+        with open(path, newline="", encoding="utf-8-sig", errors="replace") as f:
+            raw = list(_csv_mod.reader(f))
+    except Exception:
+        return []
+    if not raw:
+        return []
+
+    # Find header row
+    headers, data_start = [], 0
+    for i, row in enumerate(raw):
+        if any(c.strip() for c in row):
+            headers = [c.strip() for c in row]; data_start = i + 1; break
+    if not headers:
+        return []
+
+    hnorms = [_norm_bonus_hdr(h) for h in headers]
+
+    # Classify columns
+    present_col = None; select_col = None; pick_col = None; unpick_col = None; mode_col = None
+    pick_slot_cols = {}; unpick_slot_cols = {}
+
+    _PRESENT = {"presentid", "parentbox", "boxid", "presentboxid", "boxids", "presentbox"}
+    _SELECT  = {"selectitemid", "selectid"}
+    _PICK    = {"pickbonuspresentid", "pick", "pickid", "poola", "pool", "pickbonusid", "bonuspickid"}
+    _UNPICK  = {"unpickbonuspresentid", "unpick", "unpickid", "poolb", "unpickbonusid", "bonusunpickid"}
+    _MODE    = {"mode", "bonusmode"}
+
+    for ci, hn in enumerate(hnorms):
+        mp = re.match(r"^pickbonuspresentid(\d+)$", hn)
+        mu = re.match(r"^unpickbonuspresentid(\d+)$", hn)
+        if mp:
+            pick_slot_cols[int(mp.group(1))] = ci
+        elif mu:
+            unpick_slot_cols[int(mu.group(1))] = ci
+        elif hn in _PRESENT and present_col is None:
+            present_col = ci
+        elif hn in _SELECT and select_col is None:
+            select_col = ci
+        elif hn in _PICK and pick_col is None:
+            pick_col = ci
+        elif hn in _UNPICK and unpick_col is None:
+            unpick_col = ci
+        elif hn in _MODE and mode_col is None:
+            mode_col = ci
+
+    # Check if we should parse as a Box Generator CSV
+    has_suffixes = any(re.search(r'[\._ ]\d+$', h.strip()) for h in headers)
+    has_box_name_cols = any(_is_box_name_header(h) for h in headers)
+    has_contents = any(_norm_hdr(h) in {"contents", "content"} for h in headers)
+
+    is_box_gen = (select_col is None) and (has_suffixes or has_box_name_cols or has_contents)
+
+    if is_box_gen:
+        try:
+            with open(path, encoding="utf-8-sig", errors="replace") as f:
+                csv_text = f.read()
+        except Exception:
+            return []
+        grps = parse_grouped_csv(csv_text)
+        return _box_grps_to_bonus_groups(grps) if grps else []
+
+    data = raw[data_start:]
+    groups_map = {}; groups_order = []
+
+    def _cell(row, ci):
+        val = row[ci].strip() if ci is not None and ci < len(row) else ""
+        return _clean_excel_val(val)
+
+    last_pick_val = ""
+    last_unpick_val = ""
+    for row in data:
+        while len(row) < len(headers):
+            row.append("")
+        present_id = _cell(row, present_col)
+        # Support multiple box IDs in one cell (comma-separated)
+        if "," in present_id:
+            box_ids = [p.strip() for p in present_id.split(",") if p.strip()]
+        else:
+            box_ids = [present_id] if present_id else []
+
+        select_id = _cell(row, select_col)
+        pick_val   = _cell(row, pick_col)
+        unpick_val = _cell(row, unpick_col)
+        mode_val   = _cell(row, mode_col).lower()
+
+        if pick_val:
+            last_pick_val = pick_val
+        else:
+            pick_val = last_pick_val
+
+        if unpick_val:
+            last_unpick_val = unpick_val
+        else:
+            unpick_val = last_unpick_val
+
+        if not box_ids and not select_id:
+            continue
+
+        # Continuation row (SelectItemId without PresentId)
+        if not box_ids and select_id:
+            box_ids = [groups_order[-1]] if groups_order else []
+
+        for present_id in box_ids:
+            if not present_id:
+                continue
+            if present_id not in groups_map:
+                groups_map[present_id] = {
+                    "present_id": present_id,
+                    "mode": mode_val or "standardized",
+                    "pick_id": pick_val,
+                    "unpick_id": unpick_val,
+                    "vertical_picks": [],
+                    "vertical_unpicks": [],
+                    "items": [],
+                    "_pslots": {}, "_uslots": {},
+                }
+                groups_order.append(present_id)
+            grp = groups_map[present_id]
+            if not grp["pick_id"] and pick_val:    grp["pick_id"]   = pick_val
+            if not grp["unpick_id"] and unpick_val: grp["unpick_id"] = unpick_val
+            if not grp["mode"] and mode_val:         grp["mode"]      = mode_val
+            
+            # Collect vertical picks/unpicks
+            if pick_val:
+                grp["vertical_picks"].append(pick_val)
+            if unpick_val:
+                grp["vertical_unpicks"].append(unpick_val)
+
+            for sn, ci in pick_slot_cols.items():
+                v = _cell(row, ci)
+                if v: grp["_pslots"][sn] = v
+            for sn, ci in unpick_slot_cols.items():
+                v = _cell(row, ci)
+                if v: grp["_uslots"][sn] = v
+            if select_id:
+                grp["items"].append({"select_id": select_id,
+                                     "pick_id": pick_val or None,
+                                     "unpick_id": unpick_val or None})
+
+    # Apply slot-indexed overrides
+    for pid in groups_order:
+        grp = groups_map[pid]
+        for i, item in enumerate(grp["items"]):
+            if i in grp["_pslots"] and not item["pick_id"]:
+                item["pick_id"] = grp["_pslots"][i]
+            if i in grp["_uslots"] and not item["unpick_id"]:
+                item["unpick_id"] = grp["_uslots"][i]
+        del grp["_pslots"]; del grp["_uslots"]
+
+    return [groups_map[pid] for pid in groups_order]
+
+
+def _box_grps_to_bonus_groups(grps):
+    """Convert parse_grouped_csv output to BonusGroup list."""
+    result = []
+    for grp in grps:
+        cfg = grp.get("cfg_override", {})
+        box_id = str(cfg.get("id", "")).strip()
+        if not box_id:
+            continue
+        items = []
+        for it in grp.get("items", []):
+            sid = str(it.get("id", "")).strip()
+            if not sid or sid == "0":
+                continue
+            items.append({
+                "select_id": sid,
+                "pick_id":   str(it["bonus_pick_id"])   if it.get("bonus_pick_id")   else None,
+                "unpick_id": str(it["bonus_unpick_id"]) if it.get("bonus_unpick_id") else None,
+            })
+        result.append({
+            "present_id": box_id,
+            "mode":      cfg.get("bonus_mode", "standardized"),
+            "pick_id":   str(cfg.get("bonus_pick_id",   "")),
+            "unpick_id": str(cfg.get("bonus_unpick_id", "")),
+            "items":     items,
+        })
+    return result
+
+
+# â”€â”€ PresentItemParam2 XML lookup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+def _lookup_select_ids_from_xml(path, present_ids=None):
+    """Return {present_id_str: [drop_id_str, ...]} from PresentItemParam2.xml.
+    Only non-zero DropId_N values are included.
+    If present_ids is a set/list, only those IDs are returned.
+    """
+    result = {}
+    
+    def _norm_id(val):
+        val = val.strip()
+        try:
+            return str(int(val))
+        except ValueError:
+            return val
+
+    pid_set = set(_norm_id(p) for p in present_ids) if present_ids else None
+    try:
+        for row_txt in _iter_xml_rows(path):
+            pid = _get_tag(row_txt, "Id") or _get_tag(row_txt, "PresentId")
+            if not pid:
+                continue
+            norm_pid = _norm_id(pid)
+            if pid_set and norm_pid not in pid_set:
+                continue
+            drops = []
+            # Collect DropId_0, DropId_1, DropId_2, ... in order
+            for m in re.finditer(r"<DropId(?:_(\d+))?>(.*?)</DropId(?:_\d+)?>",
+                                 row_txt, re.IGNORECASE | re.DOTALL):
+                slot = int(m.group(1)) if m.group(1) else len(drops)
+                val  = m.group(2).strip()
+                cd_m = re.search(r'<!\[CDATA\[(.*?)\]\]>', val, re.DOTALL)
+                if cd_m:
+                    val = cd_m.group(1).strip()
+                if val and val != "0":
+                    while len(drops) <= slot:
+                        drops.append(None)
+                    drops[slot] = val
+            result[norm_pid] = [d for d in drops if d]
+    except Exception:
+        pass
+    return result
+
+
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# TOOL 20 â€” BonusPresentItemInfo Generator
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+ACC_BONUS = "#c084fc"   # purple accent
+
+class BonusPresentItemInfoGenerator(tk.Frame):
+    ACC = ACC_BONUS
+
+    def __init__(self, parent, root, session):
+        super().__init__(parent, bg=BG)
+        self.root = root; self.session = session
+        self._csv_path  = None
+        self._xml_path  = None          # PresentItemParam2.xml for SelectId lookup
+        self._xml_lookup = {}           # {present_id: [select_ids]}
+        self._groups    = []            # list of BonusGroup dicts
+        self._global_mode = tk.StringVar(value="standardized")
+        self._build_load_screen()
+
+    # â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    def _clear(self):
+        for w in self.winfo_children(): w.destroy()
+
+    def _log(self, msg):
+        if hasattr(self, "_log_txt"):
+            self._log_txt.config(state="normal")
+            self._log_txt.insert("end", msg + "\n")
+            self._log_txt.see("end")
+            self._log_txt.config(state="disabled")
+        self.update_idletasks()
+
+    # â”€â”€ Screen 1: Load â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    def _build_load_screen(self):
+        self._clear()
+        tk.Label(self, text="BONUS PRESENT ITEM INFO GENERATOR",
+                 font=("Consolas",15,"bold"), bg=BG, fg=self.ACC).pack(pady=(18,2))
+        tk.Label(self,
+                 text="Generates BonusPresentItemInfo XML rows.\n"
+                      "PresentId = parent box  |  SelectItemId = item from that box (NOT a box itself)\n"
+                      "PickBonusPresentId / UnpickBonusPresentId MUST be Box IDs, never raw item IDs.",
+                 bg=BG, fg=FG_DIM, font=("Consolas",8), justify="center").pack(pady=(0,8))
+
+        # Global mode
+        s0 = mk_section(self, "  Step 1 — Global Bonus Mode  ")
+        mf = tk.Frame(s0, bg=BG); mf.pack(anchor="w", padx=10, pady=4)
+        _std_tip = ("Standardized: all items in a box share the SAME Pool A and Pool B box IDs.\n"
+                    "One <ROW> per SelectItemId, all using the same Pick/Unpick IDs.")
+        _man_tip = ("Manual: each SelectItemId gets its own unique Pick/Unpick ID pair.\n"
+                    "Enter per-item IDs in the config table, or use PickBonusPresentId_0, _1, ... in CSV.")
+        _user_set_tip = ("User-set: configure the mode (Standardized vs Manual) per box on the next screen.")
+        for lbl, val, tip in [
+            ("Standardized  (shared Pool A/B for all items)", "standardized", _std_tip),
+            ("Manual  (unique Pool A/B per item)",            "manual",       _man_tip),
+            ("User-set (configure per box on next screen)",   "user_set",     _user_set_tip),
+        ]:
+            rb = tk.Radiobutton(mf, text=lbl, variable=self._global_mode, value=val,
+                                bg=BG, fg=FG, selectcolor=BG3, activebackground=BG,
+                                font=("Consolas",9))
+            rb.pack(side="left", padx=8)
+            if _APP_SETTINGS.get("tooltips_enabled", True):
+                _attach_tooltip(rb, tip)
+
+        # CSV import
+        s1 = mk_section(self, "  Step 2 — Import Bonus CSV  (optional)")
+        self._csv_status = tk.StringVar(value="No CSV loaded")
+        r1 = tk.Frame(s1, bg=BG); r1.pack(fill="x", padx=8, pady=4)
+        tk.Label(r1, textvariable=self._csv_status, bg=BG, fg=FG_GREY,
+                 font=("Consolas",8)).pack(side="left", fill="x", expand=True)
+        mk_btn(r1, "📂  Load Bonus CSV", self._load_csv,
+               color=self.ACC, fg=BG2).pack(side="right", padx=4)
+        tk.Label(s1,
+                 text="  Accepts: direct format (PresentId / SelectItemId / PickBonusPresentId / Unpick / Mode)\n"
+                      "  OR: Box Generator CSV format (BoxId + item rows + bonus columns)\n"
+                      "  OR: Parent Box list (PresentId + Pick + Unpick, SelectItemIds filled from XML)",
+                 bg=BG, fg=FG_GREY, font=("Consolas",7), justify="left").pack(anchor="w", padx=10, pady=(0,4))
+
+        # XML import
+        s2 = mk_section(self, "  Step 3 — Import PresentItemParam2 XML  (optional — auto-fills SelectItemIds)")
+        self._xml_status = tk.StringVar(value="No XML loaded")
+        r2 = tk.Frame(s2, bg=BG); r2.pack(fill="x", padx=8, pady=4)
+        tk.Label(r2, textvariable=self._xml_status, bg=BG, fg=FG_GREY,
+                 font=("Consolas",8)).pack(side="left", fill="x", expand=True)
+        mk_btn(r2, "📂  Load XML", self._load_xml,
+               color=BG3).pack(side="right", padx=4)
+
+        # Action buttons
+        nav = tk.Frame(self, bg=BG); nav.pack(pady=10)
+        mk_btn(nav, "▶  Continue to Config", self._go_config,
+               color=self.ACC, fg=BG2, font=("Consolas",11,"bold")).pack(side="left", padx=8)
+        mk_btn(nav, "✏️  Start (no CSV — manual entry)", self._start_empty,
+               color=BG3).pack(side="left", padx=4)
+
+        # Log
+        self._log_txt = scrolledtext.ScrolledText(self, height=6,
+                                                   font=("Consolas",8), bg=BG2, fg=FG)
+        self._log_txt.pack(fill="both", expand=True, padx=10, pady=6)
+        self._log_txt.config(state="disabled")
+
+    def _load_csv(self):
+        path = filedialog.askopenfilename(
+            title="Load Bonus CSV",
+            filetypes=[("CSV","*.csv"),("All","*.*")], parent=self.root)
+        if not path: return
+        self._csv_path = path
+        try:
+            grps = _parse_bonus_present_csv(path)
+        except Exception as e:
+            self._log(f"Error parsing CSV: {e}"); return
+        self._groups = grps
+        self._csv_status.set(f"âœ“  {os.path.basename(path)}  ({len(grps)} box group(s) loaded)")
+        self._log(f"Loaded {len(grps)} group(s) from {os.path.basename(path)}")
+        for g in grps:
+            items_note = f"{len(g['items'])} items" if g["items"] else "no items (will use XML lookup)"
+            self._log(f"  PresentId {g['present_id']}: mode={g['mode']}, {items_note}")
+
+    def _load_xml(self):
+        path = filedialog.askopenfilename(
+            title="Load PresentItemParam2 XML",
+            filetypes=[("XML","*.xml"),("All","*.*")], parent=self.root)
+        if not path: return
+        
+        # Auto-detect PresentItemParam XML in the same folder if another XML was selected
+        fn_lower = os.path.basename(path).lower()
+        if "presentitemparam" not in fn_lower and "presentparam" not in fn_lower:
+            folder = os.path.dirname(path)
+            found_path = None
+            if os.path.isdir(folder):
+                files = os.listdir(folder)
+                # 1. Look for PresentItemParam2.xml
+                for f in files:
+                    if f.lower() == "presentitemparam2.xml":
+                        found_path = os.path.join(folder, f)
+                        break
+                # 2. Look for PresentItemParam.xml
+                if not found_path:
+                    for f in files:
+                        if f.lower() == "presentitemparam.xml":
+                            found_path = os.path.join(folder, f)
+                            break
+                # 3. Fuzzy match for any *presentitemparam* or *presentparam* XML
+                if not found_path:
+                    for f in files:
+                        f_lower = f.lower()
+                        if f_lower.endswith(".xml") and ("presentitemparam" in f_lower or "presentparam" in f_lower):
+                            found_path = os.path.join(folder, f)
+                            break
+            if found_path:
+                self._log(f"Auto-located present parameter XML in folder: {os.path.basename(found_path)}")
+                path = found_path
+
+        self._xml_path = path
+        try:
+            pids = [g["present_id"] for g in self._groups] if self._groups else None
+            self._xml_lookup = _lookup_select_ids_from_xml(path, pids)
+        except Exception as e:
+            self._log(f"Error reading XML: {e}"); return
+        self._xml_status.set(f"✓  {os.path.basename(path)}  ({len(self._xml_lookup)} box(es) indexed)")
+        self._log(f"XML lookup: {len(self._xml_lookup)} PresentId(s) found")
+
+    def _start_empty(self):
+        self._groups = [{"present_id":"","mode":self._global_mode.get(),
+                         "pick_id":"","unpick_id":"","items":[]}]
+        self._go_config()
+
+    def _go_config(self):
+        # Fill missing SelectItemIds from XML lookup
+        def _norm_id(val):
+            val = val.strip()
+            try:
+                return str(int(val))
+            except ValueError:
+                return val
+
+        for grp in self._groups:
+            norm_grp_pid = _norm_id(grp["present_id"])
+            if not grp["items"] and norm_grp_pid in self._xml_lookup:
+                items = []
+                sids = self._xml_lookup[norm_grp_pid]
+                v_picks = grp.get("vertical_picks", [])
+                v_unpicks = grp.get("vertical_unpicks", [])
+                for i, sid in enumerate(sids):
+                    pit = v_picks[i] if i < len(v_picks) else None
+                    uit = v_unpicks[i] if i < len(v_unpicks) else None
+                    items.append({"select_id": sid, "pick_id": pit, "unpick_id": uit})
+                grp["items"] = items
+        self._build_config_screen()
+
+    # ── Screen 2: Config ──────────────────────────────────────────────────
+
+    def _build_config_screen(self):
+        self._clear()
+        tk.Label(self, text="BONUS PRESENT ITEM INFO — CONFIG",
+                 font=("Consolas",13,"bold"), bg=BG, fg=self.ACC).pack(pady=(14,4))
+
+        nav_top = tk.Frame(self, bg=BG); nav_top.pack(fill="x", padx=10)
+        mk_btn(nav_top, "← Back", self._build_load_screen, color=BG3).pack(side="left", padx=4)
+        mk_btn(nav_top, "⚡  Generate XML", self._generate,
+               color=self.ACC, fg=BG2, font=("Consolas",10,"bold")).pack(side="right", padx=4)
+
+        tk.Label(self,
+                 text="⚠  PickBonusPresentId / UnpickBonusPresentId = Box IDs only.\n"
+                      "   SelectItemId = item from the corresponding PresentId box only, NOT a box.",
+                 bg=BG, fg=ACC3, font=("Consolas",8,"bold")).pack(anchor="w", padx=12, pady=(4,0))
+
+        canvas = tk.Canvas(self, bg=BG, highlightthickness=0)
+        vsb = tk.Scrollbar(self, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        canvas.pack(fill="both", expand=True, padx=6, pady=4)
+        inner = tk.Frame(canvas, bg=BG)
+        win_id = canvas.create_window((0,0), window=inner, anchor="nw")
+        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(win_id, width=e.width))
+
+        self._grp_vars = []  # list of (present_var, mode_var, pick_var, unpick_var, item_vars)
+
+        for gi, grp in enumerate(self._groups):
+            gframe = tk.LabelFrame(inner,
+                text=f"  Group {gi+1}  —  PresentId: {grp['present_id'] or '(new)'}  ",
+                bg=BG, fg=self.ACC, font=("Consolas",9,"bold"), bd=1, relief="groove")
+            gframe.pack(fill="x", padx=6, pady=4)
+
+            # PresentId
+            top = tk.Frame(gframe, bg=BG); top.pack(fill="x", padx=8, pady=4)
+            tk.Label(top, text="PresentId (Box):", width=20, anchor="w",
+                     bg=BG, fg=FG, font=("Consolas",9)).pack(side="left")
+            pv = tk.StringVar(value=grp["present_id"])
+            tk.Entry(top, textvariable=pv, width=12, bg=BG3, fg=FG,
+                     insertbackground=FG, font=("Consolas",9), relief="flat").pack(side="left", padx=4)
+
+            # Mode
+            gmode = self._global_mode.get()
+            if gmode == "user_set":
+                initial_mode = grp.get("mode")
+                if not initial_mode or initial_mode == "user_set":
+                    initial_mode = "standardized"
+                mv = tk.StringVar(value=initial_mode)
+            else:
+                mv = tk.StringVar(value=gmode)
+
+            mf2 = tk.Frame(gframe, bg=BG)
+            if gmode == "user_set":
+                mf2.pack(anchor="w", padx=8, pady=(0,4))
+                tk.Label(mf2, text="Mode:", bg=BG, fg=FG, font=("Consolas",9)).pack(side="left")
+
+            std_frame = tk.Frame(gframe, bg=BG)
+            man_frame = tk.Frame(gframe, bg=BG)
+
+            def _make_mode_toggle(sf=std_frame, maf=man_frame, mode_v=mv):
+                def _toggle(*_):
+                    if mode_v.get() == "standardized":
+                        maf.pack_forget(); sf.pack(anchor="w", padx=8, pady=2)
+                    else:
+                        sf.pack_forget(); maf.pack(fill="x", padx=8, pady=2)
+                return _toggle
+
+            _toggle_fn = _make_mode_toggle()
+
+            if gmode == "user_set":
+                for lbl, val in [("Standardized", "standardized"), ("Manual", "manual")]:
+                    tk.Radiobutton(mf2, text=lbl, variable=mv, value=val,
+                                   bg=BG, fg=FG, selectcolor=BG3, activebackground=BG,
+                                   font=("Consolas",9), command=_toggle_fn).pack(side="left", padx=6)
+
+            # Standardized: two shared fields
+            pickv   = tk.StringVar(value=grp.get("pick_id", ""))
+            unpickv = tk.StringVar(value=grp.get("unpick_id", ""))
+            for lbl, var in [("PickBonusPresentId (Pool A):", pickv),
+                             ("UnpickBonusPresentId (Pool B):", unpickv)]:
+                r = tk.Frame(std_frame, bg=BG); r.pack(fill="x", pady=1)
+                tk.Label(r, text=lbl, width=28, anchor="w",
+                         bg=BG, fg=FG, font=("Consolas",9)).pack(side="left")
+                tk.Entry(r, textvariable=var, width=12, bg=BG3, fg=FG,
+                         insertbackground=FG, font=("Consolas",9), relief="flat").pack(side="left", padx=4)
+
+            # Manual: per-item table
+            item_pick_vars   = []
+            item_unpick_vars = []
+
+            def _build_manual_table(parent=man_frame, items=grp["items"],
+                                     ipvars=item_pick_vars, iuvars=item_unpick_vars):
+                for w in parent.winfo_children(): w.destroy()
+                ipvars.clear(); iuvars.clear()
+                has_names = any(it.get("name","").strip() for it in items)
+                hcols = [("#",3),("SelectItemId",12)]
+                if has_names: hcols.append(("Name",24))
+                hcols += [("PickBonusPresentId",14),("UnpickBonusPresentId",14)]
+                for ci,(txt,w) in enumerate(hcols):
+                    tk.Label(parent, text=txt, width=w, bg=BG2, fg=BLUE,
+                             font=("Consolas",9,"bold"), anchor="w").grid(
+                             row=0, column=ci, padx=2, pady=2, sticky="w")
+                for i, item in enumerate(items):
+                    bg2 = BG if i%2==0 else BG2; col=0
+                    tk.Label(parent, text=str(i), width=3, bg=bg2, fg=FG_GREY,
+                             font=("Consolas",9)).grid(row=i+1,column=col,padx=2); col+=1
+                    tk.Label(parent, text=item.get("select_id",""), width=12,
+                             bg=bg2, fg=FG, font=("Consolas",9),
+                             anchor="w").grid(row=i+1,column=col,padx=2); col+=1
+                    if has_names:
+                        tk.Label(parent, text=item.get("name","")[:26], width=24,
+                                 bg=bg2, fg=FG_DIM, font=("Consolas",9),
+                                 anchor="w").grid(row=i+1,column=col,padx=2,sticky="w"); col+=1
+                    pv2 = tk.StringVar(value=item.get("pick_id") or grp.get("pick_id") or "")
+                    ipvars.append(pv2)
+                    tk.Entry(parent, textvariable=pv2, width=14, bg=BG3, fg=FG,
+                             insertbackground=FG, font=("Consolas",9),
+                             relief="flat").grid(row=i+1,column=col,padx=2); col+=1
+                    uv2 = tk.StringVar(value=item.get("unpick_id") or grp.get("unpick_id") or "")
+                    iuvars.append(uv2)
+                    tk.Entry(parent, textvariable=uv2, width=14, bg=BG3, fg=FG,
+                             insertbackground=FG, font=("Consolas",9),
+                             relief="flat").grid(row=i+1,column=col,padx=2)
+
+            _build_manual_table()
+            _toggle_fn()  # show correct sub-frame
+
+            self._grp_vars.append((pv, mv, pickv, unpickv, item_pick_vars, item_unpick_vars, grp))
+
+        mk_btn(inner, "⚡  Generate XML", self._generate,
+               color=self.ACC, fg=BG2, font=("Consolas",10,"bold")).pack(pady=10)
+
+        def _on_scroll(event):
+            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        canvas.bind_all("<MouseWheel>", _on_scroll)
+
+    # â”€â”€ Screen 3: Output â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    def _generate(self):
+        # Collect final groups from UI vars
+        final_groups = []
+        for pv, mv, pickv, unpickv, ipvars, iuvars, orig_grp in self._grp_vars:
+            pid  = pv.get().strip()
+            mode = mv.get()
+            if not pid: continue
+            pick_id   = pickv.get().strip()
+            unpick_id = unpickv.get().strip()
+            items = []
+            for i, item in enumerate(orig_grp["items"]):
+                pit = (ipvars[i].get().strip() if i < len(ipvars) else None)
+                if not pit:
+                    pit = item.get("pick_id") or ""
+                uit = (iuvars[i].get().strip() if i < len(iuvars) else None)
+                if not uit:
+                    uit = item.get("unpick_id") or ""
+                items.append({
+                    "id":              item.get("select_id",""),
+                    "name":            item.get("name",""),
+                    "bonus_pick_id":   pit,
+                    "bonus_unpick_id": uit,
+                })
+            final_groups.append({"present_id": pid, "mode": mode,
+                                  "pick_id": pick_id, "unpick_id": unpick_id,
+                                  "items": items})
+
+        if not final_groups:
+            messagebox.showwarning("Nothing to generate",
+                "No valid groups configured.", parent=self.root); return
+
+        all_rows = []
+        breakdown = []   # list of (present_id, select_id, pick, unpick)
+        for fg in final_groups:
+            rows = build_bonus_present_rows(
+                fg["present_id"], fg["items"],
+                fg["pick_id"], fg["unpick_id"],
+                fg["mode"], box_name=None)
+            all_rows.extend(rows)
+            for item in fg["items"]:
+                sid = item.get("id","")
+                if not sid or sid == "0": continue
+                # Resolve effective IDs (mirrors build_bonus_present_rows logic)
+                try: ep = int(item.get("bonus_pick_id","")) if item.get("bonus_pick_id") else None
+                except: ep = None
+                try: eu = int(item.get("bonus_unpick_id","")) if item.get("bonus_unpick_id") else None
+                except: eu = None
+                try: bp = int(fg["pick_id"]) if fg["pick_id"] else None
+                except: bp = None
+                try: bu = int(fg["unpick_id"]) if fg["unpick_id"] else None
+                except: bu = None
+                i = len([x for x in breakdown if x[0]==fg["present_id"]])
+                if ep is None:
+                    ep = bp if fg["mode"]=="standardized" else (bp+i if bp else None)
+                if eu is None:
+                    eu = bu if fg["mode"]=="standardized" else (bu+i if bu else None)
+                breakdown.append((fg["present_id"], sid, str(ep or ""), str(eu or "")))
+
+        self._build_output_screen(all_rows, breakdown)
+
+    def _build_output_screen(self, rows, breakdown):
+        self._clear()
+        tk.Label(self, text="BONUS PRESENT ITEM INFO — OUTPUT",
+                 font=("Consolas",13,"bold"), bg=BG, fg=self.ACC).pack(pady=(14,4))
+
+        nav = tk.Frame(self, bg=BG); nav.pack(pady=4)
+        mk_btn(nav, "← Back to Config", self._build_config_screen,
+               color=BG3).pack(side="left", padx=6)
+        mk_btn(nav, "⟳ Back to Load", self._build_load_screen,
+               color=BG4).pack(side="left", padx=4)
+
+        nb = ttk.Notebook(self)
+        nb.pack(fill="both", expand=True, padx=8, pady=6)
+
+        # â”€â”€ Tab 1: XML â”€â”€
+        xml_frame = tk.Frame(nb, bg=BG); nb.add(xml_frame, text="  BonusPresentItemInfo XML  ")
+        xml_text = scrolledtext.ScrolledText(xml_frame, font=("Consolas",9),
+                                              bg=BG2, fg=FG, height=28)
+        xml_text.pack(fill="both", expand=True, padx=6, pady=4)
+        xml_content = "\n".join(rows)
+        xml_text.insert("end", xml_content)
+        xml_text.config(state="disabled")
+
+        def _copy_xml():
+            self.clipboard_clear(); self.clipboard_append(xml_content)
+        def _export_xml():
+            default_dir = _APP_SETTINGS.get("libconfig_dir", os.getcwd())
+            p = filedialog.asksaveasfilename(
+                title="Save BonusPresentItemInfo XML",
+                initialdir=default_dir, initialfile="BonusPresentItemInfo_rows.xml",
+                defaultextension=".xml",
+                filetypes=[("XML","*.xml"),("All","*.*")], parent=self.root)
+            if not p: return
+            with open(p, "w", encoding="utf-8") as f:
+                f.write(xml_content)
+            messagebox.showinfo("Saved", f"Saved {len(rows)} row(s):\n{p}", parent=self.root)
+
+        btn_row = tk.Frame(xml_frame, bg=BG); btn_row.pack(pady=4)
+        mk_btn(btn_row, "📋  Copy XML", _copy_xml, color=BG3).pack(side="left", padx=6)
+        mk_btn(btn_row, "💾  Export XML", _export_xml,
+               color=self.ACC, fg=BG2).pack(side="left", padx=6)
+
+        # â”€â”€ Tab 2: Breakdown â”€â”€
+        bd_frame = tk.Frame(nb, bg=BG); nb.add(bd_frame, text=f"  Breakdown  ({len(breakdown)} rows)  ")
+        tk.Label(bd_frame,
+                 text=f"  {len(breakdown)} BonusPresentItemInfo row(s) generated",
+                 bg=BG, fg=FG_GREY, font=("Consolas",8)).pack(anchor="w", padx=8, pady=4)
+        tbl = tk.Frame(bd_frame, bg=BG); tbl.pack(fill="both", expand=True, padx=8)
+        hdrs = [("PresentId",12),("SelectItemId",14),("PickBonusPresentId",16),("UnpickBonusPresentId",16)]
+        for ci,(txt,w) in enumerate(hdrs):
+            tk.Label(tbl, text=txt, width=w, bg=BG2, fg=BLUE,
+                     font=("Consolas",9,"bold"), anchor="w").grid(
+                     row=0, column=ci, padx=2, pady=2, sticky="w")
+        # Scrollable rows via canvas
+        bd_canvas = tk.Canvas(bd_frame, bg=BG, highlightthickness=0, height=400)
+        bd_sb = tk.Scrollbar(bd_frame, orient="vertical", command=bd_canvas.yview)
+        bd_canvas.configure(yscrollcommand=bd_sb.set)
+        bd_sb.pack(side="right", fill="y"); bd_canvas.pack(fill="both", expand=True, padx=8)
+        bd_inner = tk.Frame(bd_canvas, bg=BG)
+        bd_win = bd_canvas.create_window((0,0), window=bd_inner, anchor="nw")
+        bd_inner.bind("<Configure>", lambda e: bd_canvas.configure(
+            scrollregion=bd_canvas.bbox("all")))
+        bd_canvas.bind("<Configure>", lambda e: bd_canvas.itemconfig(bd_win, width=e.width))
+        for ci,(txt,w) in enumerate(hdrs):
+            tk.Label(bd_inner, text=txt, width=w, bg=BG2, fg=BLUE,
+                     font=("Consolas",9,"bold"), anchor="w").grid(
+                     row=0, column=ci, padx=2, pady=2, sticky="w")
+        for ri,(pid,sid,pk,upk) in enumerate(breakdown):
+            bg2 = BG if ri%2==0 else BG2
+            for ci,(val,w) in enumerate([(pid,12),(sid,14),(pk,16),(upk,16)]):
+                tk.Label(bd_inner, text=val, width=w, bg=bg2, fg=FG,
+                         font=("Consolas",9), anchor="w").grid(
+                         row=ri+1, column=ci, padx=2, pady=1, sticky="w")
+
 TOOLS = [
     ("1",  "ItemParam\nGenerator",        ACC6,  ItemParamGenerator),
     ("2",  "Box XML\nGenerator",          ACC1,  BoxXMLGenerator),
+    ("3",  "Bonus Present\nInfo Gen",      ACC_BONUS, BonusPresentItemInfoGenerator),
     ("4",  "Set Item\nGenerator",         ACC8,  SetItemGenerator),
     ("5",  "Compound /\nExchange / Shop", ACC7,  CompoundExchangeShop),
     ("6",  "Box Rate / Count\nAdjuster",  ACC2,  BoxRateAdjuster),
@@ -12424,7 +14170,6 @@ TOOLS = [
     ("18", "Toolbox\nSwapper",            ACC19, ToolboxSwapper),
     ("19", "MyShop Lib\n& DB Gen", "#ff9e99", MyShopTool),
 ]
-
 class CombinedApp(tk.Tk):
     def __init__(self):
         super().__init__()
